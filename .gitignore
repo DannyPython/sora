@@ -2,3 +2,8 @@
 .vs/
 .vs/
 .vs/
+
+# generated outputs (reproduce with run_m0.py)
+results/
+__pycache__/
+.pytest_cache/
