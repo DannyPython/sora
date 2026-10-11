@@ -124,3 +124,15 @@ def test_real_data_calibration_runs():
     fit = m0.calibrate(data.load_sora())
     assert 0.9 < fit.c1 < 1.01
     assert fit.params_table().shape == (6, 4)
+
+
+def test_report_is_readable_and_honest():
+    from ssef import report
+    r = data.load_sora()
+    fit = m0.calibrate(r)
+    out = report.format_report(r, gate.unit_root_tests(r), fit, m0.rolling_forecast(r, 250), 250,
+                               fit.simulate(r.iloc[-1], 252, 100, 1)[:, -1][[0, 1, 2]], 1)
+    for key in ("GATE:", "kappa", "theta", "Bottom line", "Random walk benchmark"):
+        assert key in out
+    assert all(ord(ch) < 128 for ch in out)             # prints on any terminal
+    assert "0.722" in out and ">= 0.10" not in out.split("ADF, SORA level")[1].split("\n")[0]
