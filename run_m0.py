@@ -40,6 +40,7 @@ def main():
 
     # Block 2: gate
     tests = gate.unit_root_tests(r)
+    ag = gate.ar1_gate(r, seed=a.seed)
 
     # Block 3: calibration
     fit = m0.calibrate(r, dt=a.dt)
@@ -54,7 +55,7 @@ def main():
         paths = fit.simulate(r.iloc[-1], n_steps=252, n_paths=10_000, seed=a.seed)
         sim_q = np.percentile(paths[:, -1], [5, 50, 95])
 
-    print(report.format_report(r, tests, fit, fc, a.window, sim_q, a.seed))
+    print(report.format_report(r, tests, fit, fc, a.window, sim_q, a.seed, ag))
     if a.verbose:
         print("\n== Raw tables ==\nunit-root tests:\n" + tests.to_string()
               + f"\n\nAR(1) / structural parameters (n = {fit.n}):\n" + tab.to_string())
@@ -62,6 +63,8 @@ def main():
     # Outputs + provenance (Blueprint 8)
     tab.to_csv(out / "m0_params.csv")
     tests.to_csv(out / "m0_unit_root.csv")
+    pd.DataFrame([{"c1_ols": ag.c1_ols, "c1_bias_corrected": ag.c1_bc, "ci_low": ag.ci[0],
+                   "ci_high": ag.ci[1], "reverts": ag.reverts}]).to_csv(out / "m0_gate.csv", index=False)
     pd.DataFrame({"resid": fit.resid, "std_resid": fit.std_resid}).to_csv(out / "m0_residuals.csv")
     fc.to_csv(out / "m0_rolling_forecast.csv")
     info = {

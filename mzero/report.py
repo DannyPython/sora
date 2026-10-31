@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from . import m0
+from . import gate, m0
 
 W = 78
 
@@ -23,10 +23,10 @@ def _head(title: str) -> str:
 
 
 def format_report(r: pd.Series, tests: pd.DataFrame, fit: m0.M0Fit, fc: pd.DataFrame,
-                  window: int, sim_q=None, seed=None) -> str:
+                  window: int, sim_q=None, seed=None, ag=None) -> str:
     """Build the summary. `tests` from gate.unit_root_tests, `fc` from m0.rolling_forecast."""
     lvl, dif = tests.loc["level"], tests.loc["diff"]
-    gate_ok = bool(lvl.adf_reject_unit_root)
+    gate_ok = bool(ag.reverts) if ag is not None else bool(lvl.adf_reject_unit_root)
     tab = fit.params_table()
     out = ["=" * W, " M0 (classical Vasicek) on SORA - summary", "=" * W]
 
@@ -45,9 +45,14 @@ def format_report(r: pd.Series, tests: pd.DataFrame, fit: m0.M0Fit, fc: pd.DataF
     out.append(f"{'ADF, daily change':<22}{_p_adf(dif.adf_p):<11}"
                + ("stationary (as expected after differencing)" if dif.adf_reject_unit_root
                   else "still non-stationary"))
-    out.append("GATE: " + ("PASSED - SORA level is stationary; M0 parameters are interpretable."
+    if ag is not None:
+        out.append(f"{'c1, bias-corrected':<22}{ag.c1_bc:<11.4f}95% bootstrap CI {ag.ci[0]:.4f} to {ag.ci[1]:.4f}")
+        out.append(f"Reading: {gate.verdict(tests)}.")
+    out.append("GATE: " + ("PASSED - the bootstrap CI for c1 lies entirely below 1; M0 parameters are interpretable."
                            if gate_ok else
-                           "NOT PASSED - SORA behaves like a random walk (I(1)) in this sample."))
+                        "FAILED - the bootstrap CI for c1 reaches 1; M0 parameters are not interpretable."))
+
+
 
     # ---- 2. Parameters
     out.append(_head("2. Calibrated M0 parameters  (OLS on AR(1), 95% confidence interval)"))
@@ -63,6 +68,8 @@ def format_report(r: pd.Series, tests: pd.DataFrame, fit: m0.M0Fit, fc: pd.DataF
         out.append(row("sigma  volatility (bp per sqrt year)", fit.sigma, "sigma", 1e4, 0))
         out.append(row("c1     daily persistence (AR(1))", fit.c1, "c1", 1, 4))
         out.append(f"Half-life of a shock: {fit.half_life_steps:.0f} business days ({hl:.2f} year)")
+        if ag is not None:
+            out.append(f"kappa from bias-corrected c1: {ag.kappa_bc():.2f} per year (OLS estimate above is biased upward)")
         notes = []
         if tab.loc["c1", "ci_high"] >= 1.0:
             notes.append("c1 CI reaches 1: the data cannot rule out NO mean reversion.")
