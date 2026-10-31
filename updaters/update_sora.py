@@ -16,7 +16,7 @@ CSV_PATH = "data/Domestic_Interest_Rates_clean.csv"
 DATE_FIELD = "end_of_day"
 PUB_FIELD = "published_date"
 SORA_FIELD = "sora"
-START_DATE = "2024-01-01"     # keep the CSV consistent with range
+START_DATE = "2021-10-01"     # keep the CSV consistent with range
 
 HEADER = ["SORA Value Date", "SORA Publication Date", "SORA"]
 http = urllib3.PoolManager()
