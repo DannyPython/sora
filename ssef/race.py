@@ -113,3 +113,22 @@ def run_race(df: pd.DataFrame, horizons=(1, 20, 60), window: int = 500, with_z: 
                 summary.loc[h, f"p_boot {name}"] = float((1 + np.sum(acc[h][name] >= summary.loc[h, f"cw_t {name}"])) / (B + 1))
         boot = acc
     return {"summary": summary, "forecasts": fcs, "boot_t": boot, "null": null, "B": B, "window": window}
+
+
+def m0_vs_rw(r, horizons=(1, 20, 60), window: int = 250) -> pd.DataFrame:
+    """M0 alone against the random walk at several horizons (direct h-step forecasts, rolling window).
+    The anchor of a mean-reverting model only shows up in slow moves, so one day is not enough."""
+    R = np.asarray(pd.Series(r).dropna(), dtype=float) * 100.0
+    X0 = np.column_stack([np.ones(len(R)), R])
+    rows = []
+    for h in horizons:
+        if window + h + 20 >= len(R):
+            continue
+        T, f0 = _rolling(R, X0, h, window)
+        actual = R[T + h]
+        rows.append({"h": h, "n_oos": len(T),
+                     "rmse_rw_bp": float(np.sqrt(np.mean((actual - R[T]) ** 2)) * 100.0),
+                     "rmse_m0_bp": float(np.sqrt(np.mean((actual - f0) ** 2)) * 100.0)})
+    out = pd.DataFrame(rows).set_index("h")
+    out["m0_vs_rw_pct"] = (out["rmse_m0_bp"] / out["rmse_rw_bp"] - 1.0) * 100.0
+    return out
