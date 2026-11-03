@@ -1,0 +1,153 @@
+==============================================================================
+ M1 (policy-anchored Vasicek, error-correction form) on SORA
+==============================================================================
+Data : 1274 daily obs, 05 Oct 2021 to 29 Oct 2026; SOFR timing: published BEFORE the SORA date
+Model: d r(t) = c + a r(t-1) + b SOFR(t-1) + d dSOFR(t) + g FX(t) + 8 lags of d r + noise
+Lags : 8 lags of d r (BIC choice; residual Ljung-Box p = 0.992).  Level reversion a = -(speed x dt).
+
+1. Data checks
+------------------------------------------------------------------------------
+SOFR minus SORA spread (pp), by half-year: 2021H2:-0.1  2022H1:-0.1  2022H2:0.4  2023H1:1.1  2023H2:1.6  2024H1:1.7  2024H2:1.7  2025H1:2.0  2025H2:2.9  2026H1:2.6  2026H2:2.5
+Daily SORA change: sd 16.9 bp; autocorrelation lags 1-3 = -0.12, -0.08, -0.11; 46 days with |change| > 40 bp (largest 148 bp)
+! The spread is not stable: -0.1 pp at the start, peak 2.9 pp, 2.5 pp at the end. A constant-coefficient anchor cannot fit a drifting gap.
+! The proposal says 'compounded SORA'. Daily jumps this large look like OVERNIGHT SORA. Check the field in
+  updaters/update_sora.py (run it with --inspect) before relying on the dependent variable.
+
+2. Gate: is a regression of SORA on SOFR meaningful?
+------------------------------------------------------------------------------
+Series            level: ADF p / KPSS p       reading                   difference reading
+r (SORA)          0.373 / 0.010               unit root / persistent    stationary
+x (SOFR)          0.087 / 0.010               unit root / persistent    tests disagree
+x - r (spread)    0.144 / 0.010               unit root / persistent    stationary
+z (FX return)     <0.001 / 0.100              stationary                stationary
+
+Engle-Granger (H0: no cointegration; p-value by residual-ADF lag and by deterministic trend)
+trend   lags=0     lags=2     lags=5     lags=8     BIC rule            
+const   0.008      0.093      0.183      0.431      p=0.183 (lags=5)
++trend  <0.001     <0.001     <0.001     <0.001     p=<0.001 (lags=5)
+Reading: the verdict flips with the lag choice and with a trend term; no lag count is 'the' answer.
+
+Gregory-Hansen (cointegration allowing ONE break; most negative ADF over candidate break dates)
+model                 statistic  5% crit.  1% crit.  p-value  break date
+level shift (C)       -6.43      -4.67     -5.01     0.005    14 Mar 2025
+regime shift (C/S)    -6.43      -4.99     -5.24     0.005    14 Mar 2025
+(critical values simulated by block bootstrap of the actual (dr, dx) pairs, 200 draws, ADF lags = 8)
+Reading: the no-cointegration null is REJECTED once one break is allowed (cointegration holds).
+
+Cointegrating slope of SORA on SOFR (the 'gamma' of the long-run relation)
+full sample 0.60;  by sub-period: Oct21-Jan23:0.75  Jan23-Apr24:0.11  Apr24-Jul25:1.32  Jul25-Oct26:0.32
+rolling 500-day slope ranges from 0.30 to 1.68: not a stable coefficient.
+
+Error-correction cointegration test (bootstrap critical values; handles the I(1) regressor)
+specification                       t on a   p (t)    F(a,b)   p (F)    
+no break                            -1.42    0.624    1.73     0.608    
+level shift from 14 Mar 2025        -5.04    0.002    9.13     0.002    
+GATE (no break): NOT PASSED - no stable levels relation between SORA and SOFR.
+GATE (one break): PASSED - the break date (14 Mar 2025) is estimated from these data: treat conditional results as exploratory.
+
+3. M1 error-correction estimates
+------------------------------------------------------------------------------
+                                  no break                  level shift (exploratory)
+a  (adjustment per day)           -0.0089                   -0.0744
+kappa  reversion speed (/yr)      2.25 (se 1.57)            19.50 (se 5.18)
+half-life (business days)         78                        9
+beta1  long-run slope on SOFR     0.23 (se 0.38)            0.59 (se 0.03)
+level shift of anchor (pp)        -                         -1.53 (se 0.12)
+FX short-run coefficient g        0.0091                    0.0048
+daily noise s_eps (bp)            16.34                     16.19
+! beta1 = -b/a divides by a number close to zero: its interval is unreliable (Fieller problem).
+! Level terms use a non-standard distribution while SOFR is I(1): see the bootstrap tests below.
+
+4. Does M1 beat M0?  H0: beta1 = beta2 = 0  (SOFR level and FX excluded; M0 = M1 minus columns)
+------------------------------------------------------------------------------
+specification             F       classical p  HAC p    bootstrap p   (null: fitted a)
+no break                  0.26    0.774        0.793    0.844         0.846
+level shift Mar 2025      10.24   <0.001       0.001    0.004         0.002
+Only the BOOTSTRAP p is valid (classical and HAC assume a stationary regressor). Valid test of the M0 vs M1
+question: H0 NOT rejected without a break (no anchor detected; this is NOT evidence that SORA reverts to a fixed mean); REJECTED once a level shift is allowed (exploratory: break date chosen from the data).
+
+5. Out-of-sample race: random walk vs M0 vs M1  (direct forecasts, 500-day rolling window)
+------------------------------------------------------------------------------
+horizon   n     RMSE bp: RW   M0       M1       best
+1 day(s)  773   12.9          13.1     13.1     RW
+20 day(s) 735   28.5          33.6     36.7     RW
+60 day(s) 655   42.6          60.3     63.6     RW
+
+Clark-West test that M1 adds information beyond the smaller model (one-sided; bootstrap, 499 draws)
+comparison  h    CW t    normal p (invalid)  bootstrap p
+M1 vs M0    1    3.35    <0.001              0.028
+M1 vs M0    20   1.62    0.052               0.274
+M1 vs M0    60   0.09    0.463               0.600
+M1 vs RW    1    2.65    0.004               0.112
+M1 vs RW    20   1.08    0.139               0.406
+M1 vs RW    60   -0.78   0.781               0.768
+M0 vs RW    1    0.86    0.195               0.598
+M0 vs RW    20   0.06    0.477               0.622
+M0 vs RW    60   -0.17   0.569               0.592
+Reading: the random walk has the lowest RMSE at EVERY horizon; Clark-West asks a different question (does x add anything beyond M0?), so both can be true.
+
+6. The noise term (Proposal 4.3.3 assumes it is Gaussian)
+------------------------------------------------------------------------------
+Daily noise: M0 16.33 bp, M1 16.34 bp (degrees-of-freedom-adjusted variance reduction from adding SOFR/FX: -0.1%)
+  excess kurtosis       8.901       VIOLATED
+  skewness              0.734       VIOLATED
+  share beyond 3 sd     0.014       VIOLATED
+  Jarque-Bera           4289.808    VIOLATED
+  Ljung-Box (10 lags)   p=0.992     ok
+  ARCH-LM (5 lags)      p=<0.001    VIOLATED
+Reading: fat tails and volatility clustering -> use bootstrapped noise in simulation and a conditional
+(GARCH-filtered) EVT step; standardised residuals are saved for it.
+
+7. Scenarios: SORA in 1 year (5th / median / 95th pct, %), SOFR shock 100 bp, bootstrapped noise
+------------------------------------------------------------------------------
+scenario  no break                  level shift (exploratory)
+hold       0.65 /  2.22 /  3.84      0.73 /  1.33 /  1.97
+up         0.79 /  2.36 /  3.98      1.32 /  1.92 /  2.57
+down       0.50 /  2.07 /  3.69      0.13 /  0.73 /  1.38
+Start SORA 1.51%, SOFR 3.95%. SOFR and FX are conditioned on, not modelled.
+! The linear Gaussian model allows negative rates.
+
+8. Robustness
+------------------------------------------------------------------------------
+(a) Anchor exclusion test vs lag choice - classical/HAC p-values move a lot with the lags:
+dr lags  dx lags  a         kappa   classical p  HAC p
+0        0        -0.0199   5.1     0.106        0.053
+0        1        -0.0201   5.1     0.102        0.048
+2        0        -0.0149   3.8     0.353        0.277
+2        1        -0.0150   3.8     0.344        0.260
+5        0        -0.0134   3.4     0.461        0.445
+5        1        -0.0137   3.5     0.444        0.415
+8        0        -0.0089   2.2     0.774        0.793
+8        1        -0.0091   2.3     0.772        0.779
+
+(b) Start-date sensitivity (one rate cycle in the sample, so the window matters):
+start       n     EG p (const)  EG p (trend)  GH stat  break        slope  kappa
+2021-10-01  1274  0.183         <0.001        -6.33    2025-03-13   0.60   2.2
+2022-10-01  1023  0.002         <0.001        -6.18    2025-03-14   1.28   5.3
+2023-10-01  774   <0.001        <0.001        -5.60    2025-05-13   1.54   9.8
+2024-10-01  523   <0.001        0.014         -4.79    2025-05-20   1.52   7.9
+
+(c) Race vs window length (RMSE, bp):
+window   h    RW      M0      M1
+250      1    16.6    16.6    16.5
+250      20   40.3    40.8    44.2
+250      60   40.5    40.8    79.3
+500      1    12.9    13.1    13.1
+500      20   28.5    33.6    36.7
+500      60   42.6    60.3    63.6
+750      1    13.7    14.0    14.6
+750      20   30.6    40.3    49.9
+750      60   41.9    74.1    68.2
+
+==============================================================================
+Bottom line
+==============================================================================
+- No break: SORA and SOFR are NOT shown to be cointegrated (Engle-Granger BIC p = 0.183; ECM bootstrap p = 0.624); the anchor test does not reject (bootstrap p = 0.844).
+- Allowing one level shift (14 Mar 2025): cointegration holds (Gregory-Hansen -6.43 vs 5% value -4.67). Date is data-chosen: check it against MAS policy dates.
+- Sensitive to the start date: EG p (const) from 0.183 to <0.001 across starts; slope 0.60 to 1.54.
+- Race: random walk is best at every horizon. Bootstrap Clark-West M1 vs M0 at 1 day: p = 0.028; at 60 days: p = 0.600.
+- Headline the data support: no STABLE level anchor over the full window. A SOFR anchor appears only when a regime
+  change is allowed (data-chosen date) or the sample starts later, and its slope then varies a lot.
+- Open decisions: anchor variable (forward points would make CIP hold by construction), SORA field definition.
+
+Files saved in: results/m1
