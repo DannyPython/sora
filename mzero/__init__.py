@@ -1,1 +1,0 @@
-"""SSEF 2027: Vasicek misspecification test for SORA (Blueprint v8c)."""

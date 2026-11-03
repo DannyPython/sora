@@ -17,8 +17,8 @@ import pandas as pd
 import scipy
 import statsmodels
 
-from mzero import data, gate, m0
-from mzero import report
+from ssef import data, gate, m0
+from ssef import report
 
 
 def main():

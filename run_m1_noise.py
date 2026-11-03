@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 import m1_noise as m1
-from mzero import data, m0
+from ssef import data, m0
 
 W = 78
 
