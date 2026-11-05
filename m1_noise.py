@@ -243,7 +243,7 @@ def simulate_m1(fit: M1Fit, r0: float, x_path, z_path=None, n_paths: int = 10_00
 if __name__ == "__main__":
     import sys
     sys.path[:0] = [str(_HERE), str(_HERE.parent)]
-    from mzero import data, m0                   # M0 code from the repo (data loader + AR(1) fit)
+    from ssef import data, m0                   # M0 code from the repo (data loader + AR(1) fit)
 
     r = data.load_sora()
     fx_path = DATA_DIR / "USDSGD_clean.csv"
