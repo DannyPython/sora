@@ -8,5 +8,5 @@ results/
 __pycache__/
 .pytest_cache/
 
-# local secrets
+# local API Key
 .env
