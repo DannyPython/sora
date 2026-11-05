@@ -25,16 +25,12 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from .ols import fit_ols
-
 DT_DEFAULT = 1.0 / 252.0
 
 
 # ---------------------------------------------------------------- calibration
 def _ols_ar1(values: np.ndarray):
-    """OLS of r[1:] on (1, r[:-1]). Returns c0, c1, s2 (RSS/(n-2)), cov(c0,c1), resid.
-    Light-weight array version used inside rolling loops; gives the same numbers as `calibrate`
-    (which goes through ssef.ols.fit_ols) - a test keeps the two identical."""
+    """OLS of r[1:] on (1, r[:-1]). Returns c0, c1, s2 (RSS/(n-2)), cov(c0,c1), resid."""
     y, x = values[1:], values[:-1]
     X = np.column_stack([np.ones_like(x), x])
     beta, *_ = np.linalg.lstsq(X, y, rcond=None)
@@ -147,16 +143,13 @@ class M0Fit:
 
 
 def calibrate(r: pd.Series, dt: float = DT_DEFAULT) -> M0Fit:
-    """Calibrate M0 by OLS on the AR(1) of Sec. 6.1, through the project's single OLS routine (`ssef.ols`):
-    M0 is the regression r_t on (1, r_{t-1}), i.e. M1 with every exogenous column dropped."""
+    """Calibrate M0 by OLS on the AR(1) of Sec. 6.1."""
     r = pd.Series(r).dropna().astype(float)
     if len(r) < 10:
         raise ValueError("need at least 10 observations")
-    y = r.iloc[1:]
-    X = pd.DataFrame({"const": 1.0, "r_lag": r.iloc[:-1].to_numpy()}, index=y.index)
-    f = fit_ols(y, X)
-    return M0Fit(dt=dt, c0=f.c("const"), c1=f.c("r_lag"), s2=f.s2, cov_c=f.cov,
-                 resid=pd.Series(f.resid.to_numpy(), index=y.index, name="eps"))
+    c0, c1, s2, cov, resid = _ols_ar1(r.to_numpy())
+    return M0Fit(dt=dt, c0=c0, c1=c1, s2=s2, cov_c=cov,
+                 resid=pd.Series(resid, index=r.index[1:], name="eps"))
 
 
 # ------------------------------------------------------------------ simulation
