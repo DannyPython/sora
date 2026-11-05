@@ -9,6 +9,7 @@ M0 = classical Vasicek (constant long-run mean). M1 = the long-run level moves w
 pip install -r requirements.txt
 python run_m0.py              # M0: gate, calibration, forecasts      -> results/m0/
 python run_m1.py              # M1: gate, ECM, valid tests, race      -> results/m1/   (about 30 s; --fast for 8 s)
+python plot_results.py        # seven M0 vs M1 figures                -> results/figures/ (PNG + PDF)
 python check_data.py          # health check of the three data files (exit code 1 on any FAIL)
 python -m pytest              # all tests
 ```
@@ -36,7 +37,8 @@ Refreshing the data needs MAS API keys: copy `.env.example` to `.env`, fill it i
 | `run_m0.py`, `run_m1.py` | Reproducible drivers |
 | `updaters/`, `update_all.py` | Data refresh from MAS and the NY Fed (see `data/README.md`) |
 | `data/` | The three daily series and their data dictionary (`data/README.md`) |
-| `tests/` | `test_m0.py`, `test_m1.py`, `test_data.py` |
+| `ssef/plots.py`, `plot_results.py` | The seven M0 vs M1 figures (seaborn style, numbers from statsmodels) |
+| `tests/` | `test_m0.py`, `test_m1.py`, `test_data.py`, `test_plots.py` |
 | `m1_noise.py`, `run_m1_noise.py` | Earlier M1 noise prototype, superseded by `ssef/` + `run_m1.py` (kept until reviewed) |
 | `README_M1.md`, `docs/` | M1 notes and sample reports of one full run |
 
