@@ -92,7 +92,8 @@ def _block_idx(n: int, block: int, rng) -> np.ndarray:
 
 
 def gregory_hansen(r, x, model: str = "C", lags: int = 5, trim: float = 0.15, step: int = 1, n_sim: int = 200,
-                   seed: int = 2027, dates=None, step_sim: int = 5, null: str = "bootstrap", block: int = 10) -> dict:
+                   seed: int = 2027, dates=None, step_sim: int = 5, null: str = "bootstrap", block: int = 10,
+                   return_sims: bool = False) -> dict:
     """Gregory-Hansen (1996) ADF* statistic = most negative residual-ADF t over candidate break dates.
     model 'C'  : level shift   r = a + a2 D + b x
     model 'C/S': regime shift  r = a + a2 D + b x + b2 D x
@@ -101,7 +102,9 @@ def gregory_hansen(r, x, model: str = "C", lags: int = 5, trim: float = 0.15, st
       null='bootstrap': two random walks built from block-resampled (dr, dx) PAIRS of the actual data, so fat
                         tails, volatility clustering and the contemporaneous correlation are preserved (default);
       null='iid'      : independent Gaussian random walks (reproduces the published Gregory-Hansen values).
-    The break grid in the simulation is coarser (step_sim) to keep it fast."""
+    The break grid in the simulation is coarser (step_sim) to keep it fast.
+    return_sims=True adds the simulated null statistics under 'sims' (for plotting; off by default so the
+    result stays a flat dict of scalars)."""
     if model not in ("C", "C/S"):
         raise ValueError("model must be 'C' or 'C/S'")
     r, x = np.asarray(r, float), np.asarray(x, float)
@@ -126,6 +129,8 @@ def gregory_hansen(r, x, model: str = "C", lags: int = 5, trim: float = 0.15, st
         out.update({"cv_1pct": float(np.quantile(sims, 0.01)), "cv_5pct": float(np.quantile(sims, 0.05)),
                     "cv_10pct": float(np.quantile(sims, 0.10)), "p_value": float((1 + np.sum(sims <= stat)) / (n_sim + 1)),
                     "n_sim": n_sim, "null": null, "reject_5pct": bool(stat < np.quantile(sims, 0.05))})
+        if return_sims:
+            out["sims"] = sims
     return out
 
 
