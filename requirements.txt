@@ -4,3 +4,4 @@ scipy>=1.13
 statsmodels>=0.14
 urllib3>=2.0
 pytest>=8.0
+matplotlib>=3.8
