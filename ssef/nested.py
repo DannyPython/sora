@@ -19,7 +19,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .restriced_ecm import design_arrays, shift_dummy
+from .restricted_ecm import design_arrays, shift_dummy
 
 
 def _block_idx(n: int, block: int, rng) -> np.ndarray:

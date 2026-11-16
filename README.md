@@ -25,7 +25,7 @@ Refreshing the data needs MAS API keys: copy `.env.example` to `.env`, fill it i
 | `ssef/m0.py` | M0: AR(1) calibration, structural parameters, delta-method CIs, exact simulator, rolling forecast |
 | `ssef/gate.py` | M0 gate: ADF/KPSS, `adf_gate` (c1 with bootstrap CI; `p=0` is the pure AR(1)) |
 | `ssef/report.py` | M0 plain-language report (headline is the bootstrap view when the gate fails) |
-| `ssef/restriced_ecm.py` | M1 error-correction regression, level shift, lag selection; M0 = the same regression with columns dropped |
+| `ssef/restricted_ecm.py` | M1 error-correction regression, level shift, lag selection; M0 = the same regression with columns dropped |
 | `ssef/cointegration.py` | M1 gate: unit roots, Engle-Granger over lags/trend, Gregory-Hansen, slope stability |
 | `ssef/nested.py` | Bootstrap tests valid with an I(1) regressor (anchor test, ECM cointegration test) |
 | `ssef/race.py` | Random walk vs M0 vs M1 at 1/20/60 days, bootstrap Clark-West |

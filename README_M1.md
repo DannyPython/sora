@@ -19,7 +19,7 @@ Useful options: `--p 2` (fix the dr lags; default is the BIC choice), `--no-fx`,
 |---|---|
 | `ssef/loaders.py` | All loaders, as-of SOFR merge on publication dates, `build_dataset`, data checks |
 | `ssef/ols.py` | ONE OLS routine `fit_ols`; HAC covariance; nested F; delta-method SE |
-| `ssef/restriced_ecm.py` | M1 error-correction regression; M0 = the same regression with columns dropped (`nested_columns`, `ols.subset`); lag selection |
+| `ssef/restricted_ecm.py` | M1 error-correction regression; M0 = the same regression with columns dropped (`nested_columns`, `ols.subset`); lag selection |
 | `ssef/cointegration.py` | Gate: unit roots, Engle-Granger over lags and trend, Gregory-Hansen, slope stability |
 | `ssef/nested.py` | Valid tests with an I(1) regressor: bootstrap anchor test and ECM cointegration test (PSS/BDM type) |
 | `ssef/race.py` | Random walk vs M0 vs M1, h = 1/20/60, Clark-West with bootstrap p-values |
