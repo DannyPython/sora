@@ -31,10 +31,10 @@ def _kappa_range(ag, dt: float = DT):
     return k_lo, k_hi
 
 
-def format_report(r: pd.Series, tests: pd.DataFrame, fit: m0.M0Fit, fc: pd.DataFrame,
-                  window: int, sim_q=None, seed=None, ag=None, mh: pd.DataFrame | None = None) -> str:
-    """Build the summary. `tests` from gate.unit_root_tests, `fc` from m0.rolling_forecast, `ag` the gate
-    result (gate.adf_gate), `mh` the multi-horizon table from race.m0_vs_rw."""
+def format_report(r: pd.Series, tests: pd.DataFrame, fit: m0.M0Fit, mh: pd.DataFrame,
+                  window: int, sim_q=None, seed=None, ag=None) -> str:
+    """Build the summary. `tests` from gate.unit_root_tests, `mh` the race.m0_vs_rw table (must include h = 1),
+    `ag` the gate result (gate.adf_gate)."""
     lvl, dif = tests.loc["level"], tests.loc["diff"]
     gate_ok = bool(ag.reverts) if ag is not None else bool(lvl.adf_reject_unit_root)
     tab = fit.params_table()
@@ -119,24 +119,25 @@ def format_report(r: pd.Series, tests: pd.DataFrame, fit: m0.M0Fit, fc: pd.DataF
             out.append("c1 is outside (0, 1): SORA does not revert; kappa, theta, sigma are undefined (Blueprint 5.3).")
 
     # ---- 3. Forecast
-    e_m0, e_rw = m0.rmse(fc), m0.rmse(fc, "rw_forecast")
-    rel = (e_m0 - e_rw) / e_rw
+    one = mh.loc[1]
+    rel = one["m0_vs_rw_pct"] / 100.0
     verdict = ("about equal: M0 adds no forecasting value over 'tomorrow = today'" if abs(rel) < 0.01
                else "M0 is better than 'tomorrow = today'" if rel < 0
                else "M0 is worse than 'tomorrow = today'")
     out.append(_head("3. Out-of-sample forecast, 1 day ahead  (M0 side of Block 7)"))
-    out.append(f"Rolling window of {window} days, {len(fc)} forecasts. Error = typical miss in basis points (bp).")
-    out.append(f"{'M0 (Vasicek AR(1))':<26}{e_m0 * 1e4:>7.2f} bp")
-    out.append(f"{'Random walk benchmark':<26}{e_rw * 1e4:>7.2f} bp   ({rel * 100:+.1f}% vs random walk)")
+    out.append(f"Rolling window of {window} days, {int(one['n_oos'])} forecasts. Error = typical miss in basis points (bp).")
+    out.append(f"{'M0 (Vasicek AR(1))':<26}{one['rmse_m0_bp']:>7.2f} bp")
+    out.append(f"{'Random walk benchmark':<26}{one['rmse_rw_bp']:>7.2f} bp   ({rel * 100:+.1f}% vs random walk)")
     out.append(f"Reading: {verdict}.")
+    slow = mh.drop(index=1)
     mh_note = None
-    if mh is not None and len(mh):
+    if len(slow):
         out.append("\nSlower horizons (direct h-day-ahead forecasts, same rolling window): a pull towards a mean accumulates")
         out.append("over days, so one day is the hardest place for M0 to win.")
         out.append(f"{'horizon':<12}{'forecasts':<11}{'RMSE bp: random walk':<24}{'M0':<9}{'M0 vs random walk'}")
-        for h, rw_ in mh.iterrows():
+        for h, rw_ in slow.iterrows():
             out.append(f"{str(h) + ' day(s)':<12}{int(rw_['n_oos']):<11}{rw_['rmse_rw_bp']:<24.1f}{rw_['rmse_m0_bp']:<9.1f}{rw_['m0_vs_rw_pct']:+.1f}%")
-        mh_note = bool((mh["m0_vs_rw_pct"] < -1.0).any())
+        mh_note = bool((slow["m0_vs_rw_pct"] < -1.0).any())
         out.append("Reading: " + ("M0 beats the random walk by more than 1% at some horizon." if mh_note
                                   else "M0 does not beat the random walk by more than 1% at any horizon."))
 

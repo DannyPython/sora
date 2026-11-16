@@ -31,20 +31,6 @@ from .ols import fit_ols
 
 
 # ---------------------------------------------------------------- calibration
-def _ols_ar1(values: np.ndarray):
-    """OLS of r[1:] on (1, r[:-1]). Returns c0, c1, s2 (RSS/(n-2)), cov(c0,c1), resid.
-    Light-weight array version used inside rolling loops; gives the same numbers as `calibrate`
-    (which goes through ssef.ols.fit_ols) - a test keeps the two identical."""
-    y, x = values[1:], values[:-1]
-    X = np.column_stack([np.ones_like(x), x])
-    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
-    resid = y - X @ beta
-    n = len(y)
-    s2 = float(resid @ resid / (n - 2))
-    cov = s2 * np.linalg.inv(X.T @ X)
-    return float(beta[0]), float(beta[1]), s2, cov, resid
-
-
 def structural_params(c0: float, c1: float, s2: float, dt: float = DT):
     """(kappa, theta, sigma) from AR(1) coefficients; NaNs when c1 is not in (0, 1)."""
     if not 0.0 < c1 < 1.0:
@@ -178,29 +164,3 @@ def vasicek_moments(kappa, theta, sigma, r0, horizon_years):
     e = np.exp(-kappa * horizon_years)
     return theta + (r0 - theta) * e, sigma ** 2 * (1.0 - e ** 2) / (2.0 * kappa)
 
-
-# --------------------------------------------------------- out-of-sample race
-def rolling_forecast(r: pd.Series, window: int = 250, refit_every: int = 1) -> pd.DataFrame:
-    """One-step-ahead rolling-window forecasts of r (Blueprint 6.6, M0 side).
-
-    At origin t the model is fitted on the last `window` observations ending at t
-    (no later data), then forecasts r_{t+1}. Columns: origin, forecast, actual,
-    error, rw_forecast (random-walk benchmark = r_t), sd (predictive sd).
-    """
-    if window < 20:
-        raise ValueError("window must be >= 20")
-    v = pd.Series(r).dropna().astype(float)
-    vals = v.to_numpy()
-    rows = []
-    c0 = c1 = s2 = None
-    for i in range(window - 1, len(vals) - 1):
-        if c0 is None or (i - (window - 1)) % refit_every == 0:
-            c0, c1, s2, _, _ = _ols_ar1(vals[i - window + 1: i + 1])
-        fc = c0 + c1 * vals[i]
-        rows.append((v.index[i + 1], v.index[i], fc, vals[i + 1], vals[i + 1] - fc, vals[i], np.sqrt(s2)))
-    out = pd.DataFrame(rows, columns=["date", "origin", "forecast", "actual", "error", "rw_forecast", "sd"])
-    return out.set_index("date")
-
-
-def rmse(forecast: pd.DataFrame, col: str = "forecast") -> float:
-    return float(np.sqrt(np.mean((forecast["actual"] - forecast[col]) ** 2)))

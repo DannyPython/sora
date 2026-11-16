@@ -29,14 +29,12 @@ def ar1(c=0.97, n=600, phi=(), sigma=0.001, seed=0, mean=0.02):
 
 
 # ------------------------------------------------------------------ calibration
-def test_calibrate_matches_statsmodels_and_rolling_helper():
+def test_calibrate_matches_statsmodels():
     r = ar1(seed=1)
     fit = m0.calibrate(r)
     res = sm.OLS(r.iloc[1:].to_numpy(), sm.add_constant(r.iloc[:-1].to_numpy())).fit()
     assert (fit.c0, fit.c1) == pytest.approx(tuple(res.params))
     assert fit.s2 == pytest.approx(res.mse_resid) and fit.cov_c == pytest.approx(res.cov_params())
-    c0, c1, s2, _, e = m0._ols_ar1(r.to_numpy())              # the array version used in rolling loops
-    assert (c0, c1, s2) == pytest.approx((fit.c0, fit.c1, fit.s2)) and e == pytest.approx(fit.resid.to_numpy())
     assert fit.resid.index.equals(r.index[1:])
 
 
@@ -67,16 +65,6 @@ def test_simulator_matches_analytic_moments_and_is_seeded():
     mean, var = m0.vasicek_moments(kappa, theta, sigma, r0, 252 * DT)
     assert paths[:, -1].mean() == pytest.approx(mean, abs=3e-4) and paths[:, -1].var() == pytest.approx(var, rel=0.03)
     assert (m0.simulate_vasicek(2, 0.03, 0.01, 0.01, 10, 5, DT, 3) == m0.simulate_vasicek(2, 0.03, 0.01, 0.01, 10, 5, DT, 3)).all()
-
-
-def test_rolling_forecast_has_no_lookahead():
-    r = ar1(n=400, seed=2)
-    base = m0.rolling_forecast(r, window=100)
-    r2 = r.copy()
-    r2.iloc[251:] += 0.05                                      # change the future only
-    pert = m0.rolling_forecast(r2, window=100)
-    same = base.index[base["origin"] <= r.index[250]]
-    assert pert.loc[same, "forecast"].to_numpy() == pytest.approx(base.loc[same, "forecast"].to_numpy())
 
 
 def test_m0_vs_rw_rmse_and_shape():
@@ -143,8 +131,7 @@ def test_kappa_range_from_the_bootstrap_interval():
 
 def _report(r, ag):
     fit = m0.calibrate(r)
-    return report.format_report(r, gate.unit_root_tests(r), fit, m0.rolling_forecast(r, 250), 250, None, 1, ag,
-                                race.m0_vs_rw(r, (1, 20), 250))
+    return report.format_report(r, gate.unit_root_tests(r), fit, race.m0_vs_rw(r, (1, 20), 250), 250, None, 1, ag)
 
 
 def test_report_headline_follows_the_gate():

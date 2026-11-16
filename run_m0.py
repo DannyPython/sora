@@ -1,7 +1,7 @@
 """Run M0 (classical Vasicek on SORA): Block 1 data, Block 2 gate, Block 3 calibration,
 M0 side of Block 7 (rolling out-of-sample forecast). Every result comes from this script.
 
-    python run_m0.py [--start 2024-01-01] [--end 2026-10-08] [--window 250] [--seed 2027]
+    python run_m0.py [--start 2024-01-01] [--end 2026-10-08] [--window 500] [--seed 2027]
     python run_m0.py --lags 0          # pure AR(1) gate instead of the BIC-augmented one
     python run_m0.py --n-boot 99       # faster gate while testing
 """
@@ -22,11 +22,11 @@ def main():
     ap.add_argument("--start", default=None)
     ap.add_argument("--end", default=None)
     ap.add_argument("--dt", type=float, default=loaders.DT, help="year fraction per observation")
-    ap.add_argument("--window", type=int, default=250, help="rolling training window (observations)")
+    ap.add_argument("--window", type=int, default=500, help="rolling training window (observations), same default as run_m1")
     ap.add_argument("--seed", type=int, default=2027)
     ap.add_argument("--lags", default="bic", help="lagged differences in the gate regression: an integer, 'bic' (default) or 0 for the pure AR(1)")
     ap.add_argument("--n-boot", type=int, default=299, help="bootstrap draws per grid point in the gate")
-    ap.add_argument("--horizons", type=int, nargs="+", default=[1, 20, 60], help="horizons (days) of the M0 vs random-walk table")
+    ap.add_argument("--horizons", type=int, nargs="+", default=[1, 20, 60], help="horizons (days) of the M0 vs random-walk table; 1 is always added")
     ap.add_argument("--out", default="results/m0")
     ap.add_argument("--verbose", action="store_true", help="also print the raw statistical tables")
     a = ap.parse_args()
@@ -45,9 +45,8 @@ def main():
     fit = m0.calibrate(r, dt=a.dt)
     tab = fit.params_table()
 
-    # Block 7 (M0 side): rolling one-step forecast
-    fc = m0.rolling_forecast(r, window=a.window)
-    mh = race.m0_vs_rw(r, tuple(a.horizons), a.window)
+    # Block 7 (M0 side): rolling direct forecasts vs the random walk
+    mh = race.m0_vs_rw(r, tuple(sorted({1, *a.horizons})), a.window)
 
     # Scenario-MC building block (Block 8): 1-year-ahead simulated SORA under M0
     sim_q = None
@@ -55,7 +54,7 @@ def main():
         paths = fit.simulate(r.iloc[-1], n_steps=252, n_paths=10_000, seed=a.seed)
         sim_q = np.percentile(paths[:, -1], [5, 50, 95])
 
-    print(report.format_report(r, tests, fit, fc, a.window, sim_q, a.seed, ag, mh))
+    print(report.format_report(r, tests, fit, mh, a.window, sim_q, a.seed, ag))
     if a.verbose:
         print("\n== Raw tables ==\nunit-root tests:\n" + tests.to_string()
               + f"\n\nAR(1) / structural parameters (n = {fit.n}):\n" + tab.to_string())
@@ -67,7 +66,6 @@ def main():
                    "ci_high": ag.ci[1], "reverts": ag.reverts}]).to_csv(out / "m0_gate.csv", index=False)
     mh.to_csv(out / "m0_multi_horizon.csv")
     pd.DataFrame({"resid": fit.resid, "std_resid": fit.std_resid}).to_csv(out / "m0_residuals.csv")
-    fc.to_csv(out / "m0_rolling_forecast.csv")
     info = provenance.run_info(r.to_frame("r"), vars(a), {"gate_lags": ag.lags})
     provenance.write(out / "run_info.json", info)
     print(f"\nFiles saved in: {out}")
