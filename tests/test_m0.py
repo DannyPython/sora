@@ -94,12 +94,14 @@ def test_select_ar_lags_finds_the_true_lags():
     assert gate.select_ar_lags(ar1(c=0.9, n=3000, phi=(0.4, -0.2), seed=4), pmax=6) == 2
 
 
-def test_adf_gate_with_zero_lags_matches_the_pure_ar1_gate():
+def test_adf_gate_with_zero_lags_is_the_pure_ar1():
     r = ar1(c=0.985, n=600, seed=5)
-    a, b = gate.ar1_gate(r, n_boot=199, seed=1), gate.adf_gate(r, p=0, n_boot=199, seed=1)
-    assert b.lags == 0 and b.c1_ols == pytest.approx(a.c1_ols, abs=1e-9)
-    assert b.c1_bc == pytest.approx(a.c1_bc, abs=0.004)
-    assert b.ci[0] == pytest.approx(a.ci[0], abs=0.012) and b.ci[1] == pytest.approx(a.ci[1], abs=0.012)
+    g = gate.adf_gate(r, p=0, n_boot=199, seed=1)
+    y = r.to_numpy()
+    X = np.column_stack([np.ones(len(y) - 1), y[:-1]])
+    c1 = np.linalg.lstsq(X, y[1:], rcond=None)[0][1]
+    assert g.lags == 0 and g.c1_ols == pytest.approx(c1, abs=1e-9)
+    assert g.ci[0] <= g.c1_bc <= g.ci[1]
 
 
 def test_bias_correction_moves_c1_up_towards_the_truth():

@@ -2,7 +2,7 @@
 M0 side of Block 7 (rolling out-of-sample forecast). Every result comes from this script.
 
     python run_m0.py [--start 2024-01-01] [--end 2026-10-08] [--window 250] [--seed 2027]
-    python run_m0.py --lags 0          # pure AR(1) gate (the original), instead of the BIC-augmented one
+    python run_m0.py --lags 0          # pure AR(1) gate instead of the BIC-augmented one
     python run_m0.py --n-boot 99       # faster gate while testing
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ssef import data, gate, m0, provenance, race
+from ssef import gate, loaders, m0, provenance, race
 from ssef import report
 
 
@@ -35,14 +35,11 @@ def main():
     pd.set_option("display.float_format", lambda v: f"{v:.6g}")
 
     # Block 1: data
-    r = data.load_sora(start=a.start, end=a.end)
+    r = loaders.load_sora(start=a.start, end=a.end)
 
     # Block 2: gate
     tests = gate.unit_root_tests(r)
-    if str(a.lags) == "0":
-        ag = gate.ar1_gate(r, n_boot=a.n_boot, seed=a.seed)
-    else:
-        ag = gate.adf_gate(r, p=None if str(a.lags).lower() == "bic" else int(a.lags), n_boot=a.n_boot, seed=a.seed)
+    ag = gate.adf_gate(r, p=None if str(a.lags).lower() == "bic" else int(a.lags), n_boot=a.n_boot, seed=a.seed)
 
     # Block 3: calibration
     fit = m0.calibrate(r, dt=a.dt)

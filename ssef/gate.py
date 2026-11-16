@@ -1,14 +1,12 @@
-"""Block 2 (econometric gate), v2.
+"""M0 gate (Proposal Phase 1): does SORA revert to a mean at all?
 
-Three questions, answered separately instead of one ADF p-value:
-  1. unit_root_tests : ADF + KPSS, with and without a trend, on level and difference
-                       (backward compatible with report.py: same index/columns).
+  1. unit_root_tests : ADF + KPSS on the level and the first difference.
   2. verdict         : joint ADF/KPSS reading -> I(0) / I(1) / conflicting / low power.
-  3. ar1_gate        : the quantity M0 actually needs, c1 in (0,1):
-                       OLS c1, Kendall bias-corrected c1, and Hansen (1999) grid-bootstrap CI.
-     adf_gate        : the same with p lagged differences (augmented). Daily SORA changes are autocorrelated
-                       (-0.12 at lag 1), which a pure AR(1) ignores; p is chosen by BIC.
-  4. engle_granger   : cointegration of r with x for M1 (correct critical values).
+  3. adf_gate        : the quantity M0 actually needs, c1 in (0, 1): OLS c1 with p lagged differences
+                       (p by BIC; p = 0 is the pure AR(1)), bias-corrected c1, and a Hansen (1999)
+                       grid-bootstrap CI that stays valid near a unit root.
+
+The M1 gate (Engle-Granger, Gregory-Hansen) lives in ssef/cointegration.py.
 """
 from __future__ import annotations
 
@@ -17,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from statsmodels.tsa.stattools import adfuller, coint, kpss
+from statsmodels.tsa.stattools import adfuller, kpss
 
 from .ols import fit_ols
 
@@ -69,7 +67,7 @@ def verdict(tests: pd.DataFrame) -> str:
 class AR1Gate:
     n: int
     c1_ols: float
-    c1_bc: float                 # Kendall bias-corrected
+    c1_bc: float                 # bootstrap bias-corrected
     ci: tuple[float, float]      # Hansen grid-bootstrap CI for c1
     alpha: float
     lags: int = 0                # lagged differences in the regression (0 = pure AR(1))
@@ -86,55 +84,6 @@ class AR1Gate:
         return self.ci[1] < 1.0
 
 
-def _ols_c1(y: np.ndarray):
-    """Rowwise OLS of y_t on (1, y_{t-1}); y is (B, n+1). Returns c1, t-stat vs c supplied later."""
-    x, z = y[:, :-1], y[:, 1:]
-    xd, zd = x - x.mean(1, keepdims=True), z - z.mean(1, keepdims=True)
-    sxx = (xd ** 2).sum(1)
-    c1 = (xd * zd).sum(1) / sxx
-    res = zd - c1[:, None] * xd
-    se = np.sqrt((res ** 2).sum(1) / (x.shape[1] - 2) / sxx)
-    return c1, se
-
-
-def ar1_gate(r, alpha: float = 0.05, grid=None, n_boot: int = 499, wild: bool = True,
-             seed: int = 2027) -> AR1Gate:
-    """Bias-corrected c1 and a grid-bootstrap CI that stays valid near a unit root.
-
-    The delta-method / normal CI is wrong exactly where we are (c1 ~ 0.99): the t-statistic
-    is not normal and OLS c1 is biased down by about -(1 + 3 c1)/n (Kendall). Hansen's grid
-    bootstrap inverts the bootstrap distribution of the t-statistic over candidate values of c1.
-    wild=True multiplies residuals by Rademacher draws so volatility clustering is preserved.
-    """
-    y = np.asarray(pd.Series(r).dropna(), dtype=float)
-    n = len(y) - 1
-    c_hat, se_hat = (a[0] for a in _ols_c1(y[None, :]))
-    c_bc = c_hat + (1 + 3 * c_hat) / n
-    if grid is None:
-        grid = np.linspace(min(c_hat, 0.95) - 0.02, 1.02, 80)
-    rng = np.random.default_rng(seed)
-    accepted = []
-    for c0 in grid:
-        mu = np.mean(y[1:] - c0 * y[:-1])
-        e = y[1:] - mu - c0 * y[:-1]
-        e = e - e.mean()
-        draws = (e[None, :] * rng.choice([-1.0, 1.0], size=(n_boot, n))) if wild \
-            else rng.choice(e, size=(n_boot, n))
-        yb = np.empty((n_boot, n + 1))
-        yb[:, 0] = y[0]
-        for t in range(n):
-            yb[:, t + 1] = mu + c0 * yb[:, t] + draws[:, t]
-        cb, seb = _ols_c1(yb)
-        tb = (cb - c0) / seb
-        lo, hi = np.quantile(tb, [alpha / 2, 1 - alpha / 2])
-        t_obs = (c_hat - c0) / se_hat
-        if lo <= t_obs <= hi:
-            accepted.append(c0)
-    ci = (min(accepted), max(accepted)) if accepted else (np.nan, np.nan)
-    return AR1Gate(n=n, c1_ols=float(c_hat), c1_bc=float(c_bc), ci=ci, alpha=alpha)
-
-
-# ------------------------------------------------------------------ 2b. augmented gate (p lagged differences)
 def _aug_xy(y: np.ndarray, p: int, start: int | None = None):
     """Rows t = start..N: target y_t, regressors [1, y_{t-1}, dy_{t-1}, ..., dy_{t-p}] (levels form, so the
     coefficient on y_{t-1} is c1). `start` lets BIC compare models on one common sample."""
@@ -203,13 +152,16 @@ def _aug_boot(y: np.ndarray, c0: float, p: int, n_boot: int, wild: bool, rng):
 
 def adf_gate(r, p: int | None = None, pmax: int = 10, alpha: float = 0.05, grid=None, n_boot: int = 299,
              wild: bool = True, seed: int = 2027) -> AR1Gate:
-    """Augmented version of ar1_gate: AR(1) with p lagged differences, p by BIC unless given.
+    """Bias-corrected c1 and a grid-bootstrap CI for the AR(1) with p lagged differences (p by BIC unless
+    given; p = 0 is the pure AR(1) of the Proposal).
 
-    Same logic as ar1_gate (bias-corrected c1; Hansen 1999 grid bootstrap CI that stays valid near a unit
-    root), but the bootstrap keeps the dynamics of the lagged differences, so serial correlation in the daily
-    changes no longer distorts the interval. The bias correction is 2 c1_hat - mean(c1*) with the bootstrap
-    run at c1_hat. A CI end-point sitting on the grid edge means the grid is too narrow: widen `grid` (upper values above
-    about 1.01 are explosive and unusable).
+    Near a unit root (c1 ~ 0.99) the normal / delta-method CI is wrong: the t-statistic is not normal and OLS
+    c1 is biased down. Hansen's (1999) grid bootstrap inverts the bootstrap distribution of the t-statistic
+    over candidate values of c1. The bootstrap keeps the dynamics of the lagged differences, so serial
+    correlation in the daily changes does not distort the interval; wild=True multiplies residuals by
+    Rademacher draws so volatility clustering is preserved. Bias correction: 2 c1_hat - mean(c1*), with the
+    bootstrap run at c1_hat. A CI end-point on the grid edge means the grid is too narrow: widen `grid`
+    (values above about 1.01 are explosive and unusable).
     """
     y = np.asarray(pd.Series(r).dropna(), dtype=float)
     N = len(y) - 1
@@ -235,22 +187,3 @@ def adf_gate(r, p: int | None = None, pmax: int = 10, alpha: float = 0.05, grid=
             accepted.append(c0)
     ci = (min(accepted), max(accepted)) if accepted else (np.nan, np.nan)
     return AR1Gate(n=N, c1_ols=float(c_hat), c1_bc=float(c_bc), ci=ci, alpha=alpha, lags=p)
-
-
-# ------------------------------------------------------------------ 3. cointegration for M1
-def engle_granger(r: pd.Series, x: pd.Series, alpha: float = 0.05) -> dict:
-    """Engle-Granger two-step with MacKinnon critical values (not plain ADF tables).
-
-    Returns the test, the cointegrating slope gamma, and gamma re-estimated on each half of
-    the sample: a cointegrating vector that moves between halves is a break, not a tether.
-    """
-    df = pd.concat([r, x], axis=1, keys=["r", "x"]).dropna()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        stat, p, crit = coint(df["r"], df["x"], trend="c", autolag="bic")
-    gamma, a = np.polyfit(df["x"], df["r"], 1)
-    h = len(df) // 2
-    g1 = np.polyfit(df["x"].iloc[:h], df["r"].iloc[:h], 1)[0]
-    g2 = np.polyfit(df["x"].iloc[h:], df["r"].iloc[h:], 1)[0]
-    return {"stat": stat, "p": p, "reject_no_coint": p < alpha, "gamma": gamma,
-            "gamma_first_half": g1, "gamma_second_half": g2}

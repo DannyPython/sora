@@ -3,16 +3,12 @@
 Scope: the M1 work only (ECM, valid nested test, cointegration gate, out-of-sample race, M1 noise, robustness).
 Not included: M0 report/headline, EVT, VaR backtests, S-REIT step, updaters (see "Left for others").
 
-`docs/m1_sample_report.txt` is the output of one full run on the data through 29 Oct 2026 (regenerate it with
-`python run_m1.py`). The package replaces the earlier `m1_noise.py` / `run_m1_noise.py`, which are kept only until the
-new package has been reviewed.
-
 ## Install and run
 
-    pip install numpy pandas scipy statsmodels pytest      # pytest is only needed for the tests
+    pip install -r requirements.txt
     python run_m1.py            # full report, about 30 seconds, writes results/m1/
     python run_m1.py --fast     # fewer bootstrap draws, about 8 seconds
-    python -m pytest            # 23 tests, about 25 seconds
+    python -m pytest            # all tests, about a minute
 
 Useful options: `--p 2` (fix the dr lags; default is the BIC choice), `--no-fx`, `--sofr-lag same-day`,
 `--break-date 2025-04-14` (override the Gregory-Hansen date), `--B 999`, `--window 500`, `--horizons 1 20 60`.
@@ -23,7 +19,7 @@ Useful options: `--p 2` (fix the dr lags; default is the BIC choice), `--no-fx`,
 |---|---|
 | `ssef/loaders.py` | All loaders, as-of SOFR merge on publication dates, `build_dataset`, data checks |
 | `ssef/ols.py` | ONE OLS routine `fit_ols`; HAC covariance; nested F; delta-method SE |
-| `ssef/ecm.py` | M1 error-correction regression; M0 = the same regression with columns dropped (`nested_columns`, `ols.subset`); lag selection |
+| `ssef/restriced_ecm.py` | M1 error-correction regression; M0 = the same regression with columns dropped (`nested_columns`, `ols.subset`); lag selection |
 | `ssef/cointegration.py` | Gate: unit roots, Engle-Granger over lags and trend, Gregory-Hansen, slope stability |
 | `ssef/nested.py` | Valid tests with an I(1) regressor: bootstrap anchor test and ECM cointegration test (PSS/BDM type) |
 | `ssef/race.py` | Random walk vs M0 vs M1, h = 1/20/60, Clark-West with bootstrap p-values |

@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .ecm import M1ECM
+from .restriced_ecm import M1ECM
 from .noise import draw_noise, std_resid
 
 

@@ -33,7 +33,7 @@ def _kappa_range(ag, dt: float = 1 / 252):
 def format_report(r: pd.Series, tests: pd.DataFrame, fit: m0.M0Fit, fc: pd.DataFrame,
                   window: int, sim_q=None, seed=None, ag=None, mh: pd.DataFrame | None = None) -> str:
     """Build the summary. `tests` from gate.unit_root_tests, `fc` from m0.rolling_forecast, `ag` the gate
-    result (gate.ar1_gate / gate.adf_gate), `mh` the multi-horizon table from race.m0_vs_rw."""
+    result (gate.adf_gate), `mh` the multi-horizon table from race.m0_vs_rw."""
     lvl, dif = tests.loc["level"], tests.loc["diff"]
     gate_ok = bool(ag.reverts) if ag is not None else bool(lvl.adf_reject_unit_root)
     tab = fit.params_table()

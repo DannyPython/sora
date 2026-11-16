@@ -10,7 +10,8 @@ import statsmodels.api as sm
 from statsmodels.tsa.stattools import coint
 
 from ssef import cointegration as C
-from ssef import ecm, loaders, nested, noise, race, simulate
+from ssef import loaders, nested, noise, race, simulate
+from ssef import restriced_ecm as ecm
 from ssef.ols import exclusion_f, fit_ols, subset
 
 ROOT = Path(__file__).resolve().parent.parent

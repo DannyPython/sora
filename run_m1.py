@@ -16,7 +16,8 @@ import numpy as np
 import pandas as pd
 
 from ssef import cointegration as C
-from ssef import ecm, loaders, nested, noise, provenance, race, robustness, simulate
+from ssef import loaders, nested, noise, provenance, race, robustness, simulate
+from ssef import restriced_ecm as ecm
 from ssef.ols import exclusion_f, exclusion_wald_hac, subset
 
 W = 78

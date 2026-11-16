@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from . import cointegration as C
-from . import ecm
+from . import restriced_ecm as ecm
 from .loaders import build_dataset
 from .ols import exclusion_f, exclusion_wald_hac, subset
 from .race import run_race
