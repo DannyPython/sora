@@ -17,6 +17,8 @@ SORA_CSV = DATA_DIR / "Domestic_Interest_Rates_clean.csv"
 SOFR_CSV = DATA_DIR / "SOFR_clean.csv"
 FX_CSV = DATA_DIR / "USDSGD_clean.csv"
 
+DT = 1.0 / 252.0          # one observation = one business-day step, in years
+
 
 def _dmy(s) -> pd.DatetimeIndex:
     return pd.DatetimeIndex(pd.to_datetime(s, format="%d/%m/%Y"))

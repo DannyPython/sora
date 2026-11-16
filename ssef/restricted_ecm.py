@@ -21,9 +21,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .loaders import DT
 from .ols import OLSFit, delta_se, fit_ols
 
-DT_DEFAULT = 1.0 / 252.0
 
 
 def design_arrays(r, x, z, p: int, q: int, with_z: bool, shift=None):
@@ -161,7 +161,7 @@ class M1ECM:
         return pd.DataFrame(rows, index=["estimate", "se_delta", "ci_low", "ci_high"]).T
 
 
-def fit_ecm(df: pd.DataFrame, p: int = 2, q: int = 0, with_z: bool = True, dt: float = DT_DEFAULT,
+def fit_ecm(df: pd.DataFrame, p: int = 2, q: int = 0, with_z: bool = True, dt: float = DT,
             break_date=None) -> M1ECM:
     with_z = with_z and "z" in df
     y, X = design(df, p, q, with_z, break_date)

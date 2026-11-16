@@ -149,8 +149,8 @@ def main():
         return f"{e:.{nd}f} (se {s:.{nd}f})"
     L.append(f"{'a  (adjustment per day)':<34}{m_nb.a:<26.4f}{m_br.a:.4f}")
     L.append(f"{'kappa  reversion speed (/yr)':<34}{cell(st_nb, 'kappa'):<26}{cell(st_br, 'kappa')}")
-    L.append(f"{'half-life (business days)':<34}{(np.log(2) / m_nb.kappa / ecm.DT_DEFAULT if m_nb.valid else float('nan')):<26.0f}"
-             f"{(np.log(2) / m_br.kappa / ecm.DT_DEFAULT if m_br.valid else float('nan')):.0f}")
+    L.append(f"{'half-life (business days)':<34}{(np.log(2) / m_nb.kappa / loaders.DT if m_nb.valid else float('nan')):<26.0f}"
+             f"{(np.log(2) / m_br.kappa / loaders.DT if m_br.valid else float('nan')):.0f}")
     L.append(f"{'beta1  long-run slope on SOFR':<34}{cell(st_nb, 'beta1'):<26}{cell(st_br, 'beta1')}")
     L.append(f"{'level shift of anchor (pp)':<34}{'-':<26}{cell(st_br, 'level_shift', 100)}")
     if with_z:

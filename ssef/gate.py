@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import adfuller, kpss
 
+from .loaders import DT
 from .ols import fit_ols
 
 
@@ -72,10 +73,10 @@ class AR1Gate:
     alpha: float
     lags: int = 0                # lagged differences in the regression (0 = pure AR(1))
 
-    def kappa_ols(self, dt: float = 1 / 252) -> float:
+    def kappa_ols(self, dt: float = DT) -> float:
         return -np.log(self.c1_ols) / dt if 0 < self.c1_ols < 1 else np.nan
 
-    def kappa_bc(self, dt: float = 1 / 252) -> float:
+    def kappa_bc(self, dt: float = DT) -> float:
         return -np.log(self.c1_bc) / dt if 0 < self.c1_bc < 1 else np.nan
 
     @property

@@ -21,7 +21,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", default=None)
     ap.add_argument("--end", default=None)
-    ap.add_argument("--dt", type=float, default=m0.DT_DEFAULT, help="year fraction per observation")
+    ap.add_argument("--dt", type=float, default=loaders.DT, help="year fraction per observation")
     ap.add_argument("--window", type=int, default=250, help="rolling training window (observations)")
     ap.add_argument("--seed", type=int, default=2027)
     ap.add_argument("--lags", default="bic", help="lagged differences in the gate regression: an integer, 'bic' (default) or 0 for the pure AR(1)")

@@ -13,7 +13,7 @@ from ssef import gate, loaders, m0, race, report
 ROOT = Path(__file__).resolve().parent.parent
 HAVE_DATA = loaders.SORA_CSV.exists()
 needs_data = pytest.mark.skipif(not HAVE_DATA, reason="SORA CSV not present")
-DT = m0.DT_DEFAULT
+DT = loaders.DT
 
 
 def ar1(c=0.97, n=600, phi=(), sigma=0.001, seed=0, mean=0.02):

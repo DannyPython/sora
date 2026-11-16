@@ -22,7 +22,7 @@ import pandas as pd
 from .restricted_ecm import design_arrays, shift_dummy
 
 
-def _block_idx(n: int, block: int, rng) -> np.ndarray:
+def block_idx(n: int, block: int, rng) -> np.ndarray:
     starts = rng.integers(0, n - block + 1, size=int(np.ceil(n / block)))
     return (starts[:, None] + np.arange(block)).ravel()[:n]
 
@@ -78,7 +78,7 @@ class NullDGP:
     def draw(self, rng) -> np.ndarray:
         """One pseudo r series of the same length as the data (first s values are the actual ones)."""
         m = len(self.y)
-        e = self.resid[_block_idx(m, self.block, rng)]
+        e = self.resid[block_idx(m, self.block, rng)]
         r_prev = self.r[self.s - 1]
         hist = list(self.dr_pre)
         out = np.empty(len(self.r))

@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from . import gate, m0
+from .loaders import DT
 
 W = 78
 
@@ -22,7 +23,7 @@ def _head(title: str) -> str:
     return f"\n{title}\n{'-' * W}"
 
 
-def _kappa_range(ag, dt: float = 1 / 252):
+def _kappa_range(ag, dt: float = DT):
     """Reversion-speed range implied by the bootstrap CI of c1. If the CI reaches 1, the lower end is 0."""
     lo_c, hi_c = ag.ci
     k_hi = -np.log(lo_c) / dt if 0 < lo_c < 1 else np.nan

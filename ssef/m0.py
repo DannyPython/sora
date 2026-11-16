@@ -25,9 +25,9 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from .loaders import DT
 from .ols import fit_ols
 
-DT_DEFAULT = 1.0 / 252.0
 
 
 # ---------------------------------------------------------------- calibration
@@ -45,7 +45,7 @@ def _ols_ar1(values: np.ndarray):
     return float(beta[0]), float(beta[1]), s2, cov, resid
 
 
-def structural_params(c0: float, c1: float, s2: float, dt: float = DT_DEFAULT):
+def structural_params(c0: float, c1: float, s2: float, dt: float = DT):
     """(kappa, theta, sigma) from AR(1) coefficients; NaNs when c1 is not in (0, 1)."""
     if not 0.0 < c1 < 1.0:
         return np.nan, np.nan, np.nan
@@ -55,7 +55,7 @@ def structural_params(c0: float, c1: float, s2: float, dt: float = DT_DEFAULT):
     return kappa, theta, sigma
 
 
-def structural_jacobian(c0: float, c1: float, s2: float, dt: float = DT_DEFAULT) -> np.ndarray:
+def structural_jacobian(c0: float, c1: float, s2: float, dt: float = DT) -> np.ndarray:
     """d(kappa, theta, sigma)/d(c0, c1, s2); rows kappa, theta, sigma (delta method)."""
     kappa, _, sigma = structural_params(c0, c1, s2, dt)
     dkappa_dc1 = -1.0 / (dt * c1)
@@ -146,7 +146,7 @@ class M0Fit:
         return simulate_vasicek(self.kappa, self.theta, self.sigma, r0, n_steps, n_paths, self.dt, seed)
 
 
-def calibrate(r: pd.Series, dt: float = DT_DEFAULT) -> M0Fit:
+def calibrate(r: pd.Series, dt: float = DT) -> M0Fit:
     """Calibrate M0 by OLS on the AR(1) of Sec. 6.1, through the project's single OLS routine (`ssef.ols`):
     M0 is the regression r_t on (1, r_{t-1}), i.e. M1 with every exogenous column dropped."""
     r = pd.Series(r).dropna().astype(float)
@@ -160,7 +160,7 @@ def calibrate(r: pd.Series, dt: float = DT_DEFAULT) -> M0Fit:
 
 
 # ------------------------------------------------------------------ simulation
-def simulate_vasicek(kappa, theta, sigma, r0, n_steps, n_paths, dt=DT_DEFAULT, seed=0) -> np.ndarray:
+def simulate_vasicek(kappa, theta, sigma, r0, n_steps, n_paths, dt=DT, seed=0) -> np.ndarray:
     """Exact Vasicek transition (no Euler error). Returns (n_paths, n_steps + 1), column 0 = r0."""
     rng = np.random.default_rng(seed)
     a = np.exp(-kappa * dt)

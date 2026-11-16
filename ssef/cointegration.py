@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import adfuller, coint, kpss
 
+from .nested import block_idx
+
 
 # ------------------------------------------------------------------ unit roots
 def unit_root_table(df: pd.DataFrame, alpha: float = 0.05) -> pd.DataFrame:
@@ -86,11 +88,6 @@ def _gh_stat(y, x, model: str, lags: int, trim: float, step: int):
     return best
 
 
-def _block_idx(n: int, block: int, rng) -> np.ndarray:
-    starts = rng.integers(0, n - block + 1, size=int(np.ceil(n / block)))
-    return (starts[:, None] + np.arange(block)).ravel()[:n]
-
-
 def gregory_hansen(r, x, model: str = "C", lags: int = 5, trim: float = 0.15, step: int = 1, n_sim: int = 200,
                    seed: int = 2027, dates=None, step_sim: int = 5, null: str = "bootstrap", block: int = 10) -> dict:
     """Gregory-Hansen (1996) ADF* statistic = most negative residual-ADF t over candidate break dates.
@@ -118,7 +115,7 @@ def gregory_hansen(r, x, model: str = "C", lags: int = 5, trim: float = 0.15, st
             if null == "iid":
                 a, b = np.cumsum(rng.standard_normal(n)), np.cumsum(rng.standard_normal(n))
             elif null == "bootstrap":
-                e = d[_block_idx(n - 1, block, rng)]
+                e = d[block_idx(n - 1, block, rng)]
                 a, b = np.r_[0.0, np.cumsum(e[:, 0])], np.r_[0.0, np.cumsum(e[:, 1])]
             else:
                 raise ValueError("null must be 'bootstrap' or 'iid'")
