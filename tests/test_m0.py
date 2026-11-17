@@ -161,6 +161,11 @@ def test_run_m0_driver(tmp_path):
     cmd = [sys.executable, str(ROOT / "run_m0.py"), "--lags", "2", "--n-boot", "29", "--out", str(tmp_path)]
     out = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=300)
     assert out.returncode == 0, out.stderr[-2000:]
+    assert "headline numbers" in out.stdout and "Bottom line" not in out.stdout        # report only with --report
+    h = pd.read_csv(tmp_path / "headline.csv")
+    assert list(h.columns) == ["section", "metric", "value"] and h["metric"].is_unique
+    out = subprocess.run(cmd + ["--report"], capture_output=True, text=True, cwd=ROOT, timeout=300)
+    assert out.returncode == 0, out.stderr[-2000:]
     assert "Bottom line" in out.stdout and all(ord(ch) < 128 for ch in out.stdout)
     info = json.loads((tmp_path / "run_info.json").read_text())
     assert {"git_commit", "data_sha256", "args", "gate_lags"} <= set(info) and info["gate_lags"] == 2

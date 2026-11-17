@@ -1,4 +1,7 @@
-"""Plain-language console report for M0 (ASCII only, so it prints on any terminal)."""
+"""Console output for M0 and M1 (ASCII only, so it prints on any terminal).
+
+All formatting lives here; run_m0.py / run_m1.py only compute and save. `format_headline` prints a headline
+table; `format_report` (M0) and `format_m1_report` (M1) are the long plain-language reports (--report)."""
 from __future__ import annotations
 
 import numpy as np
@@ -8,6 +11,29 @@ from . import gate, m0
 from .loaders import DT
 
 W = 78
+
+
+def _fmt(v) -> str:
+    if isinstance(v, (bool, np.bool_)):
+        return "yes" if v else "no"
+    if isinstance(v, (int, np.integer)):
+        return str(v)
+    if isinstance(v, (float, np.floating)):
+        return "n/a" if not np.isfinite(v) else f"{v:.4g}"
+    return str(v)
+
+
+def format_headline(h: pd.DataFrame, title: str) -> str:
+    """Print a (section, metric, value) table, grouped by section."""
+    out = ["=" * W, f" {title}", "=" * W]
+    for sec, g in h.groupby("section", sort=False):
+        out.append(f"[{sec}]")
+        out += [f"  {m:<38}{_fmt(v)}" for m, v in zip(g["metric"], g["value"])]
+    return "\n".join(out)
+
+
+def _pv(p: float) -> str:
+    return "<0.001" if p < 0.001 else f"{p:.3f}"
 
 
 def _p_adf(p: float) -> str:
@@ -168,3 +194,176 @@ def format_report(r: pd.Series, tests: pd.DataFrame, fit: m0.M0Fit, mh: pd.DataF
         out.append(f"- The sample covers about one rate cycle ({len(r) / 252:.1f} years): the gate result and the estimates "
                    "can change with the start date.")
     return "\n".join(out)
+
+
+# ====================================================================== M1
+def format_m1_report(R: dict, a) -> str:
+    """Long plain-language M1 report. `R` is the dict from run_m1.compute, `a` the parsed arguments."""
+    pv, head = _pv, _head
+    df, p, with_z, chk, lag_tab = R["df"], R["p"], R["with_z"], R["chk"], R["lag_tab"]
+    break_date, ghC, ghS, coint, nst = R["break_date"], R["ghC"], R["ghS"], R["coint"], R["nested"]
+    m_nb, m_br, st_nb, st_br, S = R["m_nb"], R["m_br"], R["st_nb"], R["st_br"], R["S"]
+
+    L = ["=" * W, " M1 (policy-anchored Vasicek, error-correction form) on SORA", "=" * W]
+    L.append(f"Data : {len(df)} daily obs, {df.index[0]:%d %b %Y} to {df.index[-1]:%d %b %Y}; SOFR timing: "
+             + ("published BEFORE the SORA date" if a.sofr_lag == "strict" else "published on/before the SORA date"))
+    L.append("Model: d r(t) = c + a r(t-1) + b SOFR(t-1) + d dSOFR(t)" + (" + g FX(t)" if with_z else "")
+             + f" + {p} lags of d r + noise")
+    L.append(f"Lags : {p} lags of d r ({'BIC choice' if str(a.p).lower() == 'bic' else 'user choice'}; residual "
+             f"Ljung-Box p = {lag_tab.loc[p, 'ljung_box_p']:.3f}).  Level reversion a = -(speed x dt).")
+
+    # ------------------------------------------------------------------ 1. data checks
+    L.append(head("1. Data checks"))
+    sp = chk["spread_pp"]
+    L.append("SOFR minus SORA spread (pp), by half-year: " + "  ".join(f"{y}{h}:{v:.1f}" for (y, h), v in sp.items()))
+    L.append(f"Daily SORA change: sd {chk['dr_sd_bp']:.1f} bp; autocorrelation lags 1-3 = "
+             + ", ".join(f"{v:.2f}" for v in chk["dr_autocorr"]) + f"; {chk['n_jump_40bp']} days with |change| > 40 bp "
+             f"(largest {chk['max_abs_jump_bp']:.0f} bp)")
+    L.append(f"! The spread is not stable: {sp.iloc[0]:.1f} pp at the start, peak {sp.max():.1f} pp, {sp.iloc[-1]:.1f} pp at the end."
+             " A constant-coefficient anchor cannot fit a drifting gap.")
+    L.append("! The proposal says 'compounded SORA'. Daily jumps this large look like OVERNIGHT SORA. Check the field in")
+    L.append("  updaters/update_sora.py (run it with --inspect) before relying on the dependent variable.")
+
+    # ------------------------------------------------------------------ 2. gate
+    L.append(head("2. Gate: is a regression of SORA on SOFR meaningful?"))
+    ur, eg = R["ur"], R["eg"]
+    L.append(f"{'Series':<18}{'level: ADF p / KPSS p':<28}{'reading':<26}{'difference reading'}")
+    for sname in ur.index.get_level_values(0).unique():
+        lv, df_ = ur.loc[(sname, "level")], ur.loc[(sname, "diff")]
+        L.append(f"{sname:<18}{pv(lv.adf_p) + ' / ' + pv(lv.kpss_p):<28}{lv.reading:<26}{df_.reading}")
+    L.append("\nEngle-Granger (H0: no cointegration; p-value by residual-ADF lag and by deterministic trend)")
+    L.append(f"{'trend':<8}" + "".join(f"{('lags=' + str(l)):<11}" for l in (0, 2, 5, 8)) + f"{'BIC rule':<20}")
+    for tr, label in (("c", "const"), ("ct", "+trend")):
+        cells = [eg.loc[(tr, "fixed", l), "p_value"] for l in (0, 2, 5, 8)]
+        bic = eg.loc[tr].xs("BIC", level="rule").iloc[0]
+        bic_lag = eg.loc[tr].xs("BIC", level="rule").index[0]
+        L.append(f"{label:<8}" + "".join(f"{pv(c):<11}" for c in cells) + f"p={pv(bic['p_value'])} (lags={bic_lag})")
+    L.append("Reading: the verdict flips with the lag choice and with a trend term; no lag count is 'the' answer.")
+
+    L.append("\nGregory-Hansen (cointegration allowing ONE break; most negative ADF over candidate break dates)")
+    L.append(f"{'model':<22}{'statistic':<11}{'5% crit.':<10}{'1% crit.':<10}{'p-value':<9}{'break date'}")
+    for g, lab in ((ghC, "level shift (C)"), (ghS, "regime shift (C/S)")):
+        L.append(f"{lab:<22}{g['stat']:<11.2f}{g['cv_5pct']:<10.2f}{g['cv_1pct']:<10.2f}{pv(g['p_value']):<9}{g['break_date']:%d %b %Y}")
+    L.append(f"(critical values simulated by block bootstrap of the actual (dr, dx) pairs, {a.gh_sim} draws, ADF lags = {p})")
+    L.append("Reading: " + ("the no-cointegration null is REJECTED once one break is allowed (cointegration holds)." if ghC["reject_5pct"]
+                            else "no cointegration even with one break."))
+
+    ss = R["ss"]
+    L.append("\nCointegrating slope of SORA on SOFR (the 'gamma' of the long-run relation)")
+    subs = "  ".join(f"{pd.Timestamp(r_['from']):%b%y}-{pd.Timestamp(r_['to']):%b%y}:{r_['slope']:.2f}" for _, r_ in ss["sub_periods"].iterrows())
+    L.append(f"full sample {ss['full']:.2f};  by sub-period: {subs}")
+    roll = ss["rolling"][500]
+    L.append(f"rolling 500-day slope ranges from {roll.min():.2f} to {roll.max():.2f}: not a stable coefficient.")
+
+    L.append("\nError-correction cointegration test (bootstrap critical values; handles the I(1) regressor)")
+    L.append(f"{'specification':<36}{'t on a':<9}{'p (t)':<9}{'F(a,b)':<9}{'p (F)':<9}")
+    for lab, key in (("no break", "no_break"), (f"level shift from {break_date:%d %b %Y}", "break")):
+        c_ = coint.loc[key]
+        L.append(f"{lab:<36}{c_['t']:<9.2f}{pv(c_['p_boot_t_left']):<9}{c_['F']:<9.2f}{pv(c_['p_boot_F']):<9}")
+    L.append("GATE (no break): " + ("PASSED" if R["gate_nobreak"] else "NOT PASSED - no stable levels relation between SORA and SOFR."))
+    L.append("GATE (one break): " + ("PASSED" if ghC["reject_5pct"] else "NOT PASSED")
+             + f" - the break date ({break_date:%d %b %Y}) is estimated from these data: treat conditional results as exploratory.")
+
+    # ------------------------------------------------------------------ 3. ECM estimates
+    L.append(head("3. M1 error-correction estimates"))
+    L.append(f"{'':<34}{'no break':<26}{'level shift (exploratory)'}")
+
+    def cell(st, k, scale=1.0, nd=2):
+        if k not in st.index or not np.isfinite(st.loc[k, "estimate"]):
+            return "n/a"
+        e, s = st.loc[k, "estimate"] * scale, st.loc[k, "se_delta"] * scale
+        return f"{e:.{nd}f} (se {s:.{nd}f})"
+    L.append(f"{'a  (adjustment per day)':<34}{m_nb.a:<26.4f}{m_br.a:.4f}")
+    L.append(f"{'kappa  reversion speed (/yr)':<34}{cell(st_nb, 'kappa'):<26}{cell(st_br, 'kappa')}")
+    L.append(f"{'half-life (business days)':<34}{(np.log(2) / m_nb.kappa / DT if m_nb.valid else float('nan')):<26.0f}"
+             f"{(np.log(2) / m_br.kappa / DT if m_br.valid else float('nan')):.0f}")
+    L.append(f"{'beta1  long-run slope on SOFR':<34}{cell(st_nb, 'beta1'):<26}{cell(st_br, 'beta1')}")
+    L.append(f"{'level shift of anchor (pp)':<34}{'-':<26}{cell(st_br, 'level_shift', 100)}")
+    if with_z:
+        L.append(f"{'FX short-run coefficient g':<34}{m_nb.gamma_z:<26.4f}{m_br.gamma_z:.4f}")
+    L.append(f"{'daily noise s_eps (bp)':<34}{m_nb.s_eps * 1e4:<26.2f}{m_br.s_eps * 1e4:.2f}")
+    L.append("! beta1 = -b/a divides by a number close to zero: its interval is unreliable (Fieller problem).")
+    L.append("! Level terms use a non-standard distribution while SOFR is I(1): see the bootstrap tests below.")
+
+    # ------------------------------------------------------------------ 4. nested test
+    L.append(head("4. Does M1 beat M0?  H0: no SOFR or FX term matters  (M0 = M1 minus every SOFR/FX column)"))
+    L.append(f"{'specification':<26}{'F':<8}{'classical p':<13}{'HAC p':<9}{'bootstrap p':<14}{'(null: fitted a)'}")
+    for lab, key in (("no break", "no_break"), (f"level shift {break_date:%b %Y}", "break")):
+        n_ = nst.loc[key]
+        L.append(f"{lab:<26}{n_['F']:<8.2f}{pv(n_['p_classical']):<13}{pv(n_['p_hac']):<9}{pv(n_['p_boot']):<14}{pv(n_['p_boot_fitted_a'])}")
+    L.append("Only the BOOTSTRAP p is valid (classical and HAC assume a stationary regressor). Valid test of the M0 vs M1")
+    L.append("question: " + ("H0 NOT rejected without a break (no anchor detected; this is NOT evidence that SORA reverts to a fixed mean)"
+                             if nst.loc["no_break", "p_boot"] >= 0.05 else "H0 rejected without a break")
+             + ("; REJECTED once a level shift is allowed (exploratory: break date chosen from the data)."
+                if nst.loc["break", "p_boot"] < 0.05 else "; not rejected with a level shift either."))
+
+    # ------------------------------------------------------------------ 5. race
+    L.append(head(f"5. Out-of-sample race: random walk vs M0 vs M1  (direct forecasts, {a.window}-day rolling window)"))
+    L.append(f"M0 and M1 are the ECMs of sections 3-4 ({p} lags of d r, no break), regressors dated at the forecast origin.")
+    L.append(f"{'horizon':<10}{'n':<6}{'RMSE bp: RW':<14}{'M0':<9}{'M1':<9}{'best'}")
+    for h in a.horizons:
+        v = {k: S.loc[h, f'rmse_{k}_bp'] for k in ('rw', 'm0', 'm1')}
+        L.append(f"{str(h) + ' day(s)':<10}{int(S.loc[h, 'n_oos']):<6}{v['rw']:<14.1f}{v['m0']:<9.1f}{v['m1']:<9.1f}{min(v, key=v.get).upper()}")
+    L.append(f"\nClark-West test that M1 adds information beyond the smaller model (one-sided; bootstrap, {a.race_B} draws)")
+    L.append(f"{'comparison':<12}{'h':<5}{'CW t':<8}{'normal p (invalid)':<20}{'bootstrap p'}")
+    for name in ("M1 vs M0", "M1 vs RW", "M0 vs RW"):
+        for h in a.horizons:
+            L.append(f"{name:<12}{h:<5}{S.loc[h, 'cw_t ' + name]:<8.2f}{pv(S.loc[h, 'p_normal ' + name]):<20}{pv(S.loc[h, 'p_boot ' + name])}")
+    L.append("Reading: " + ("the random walk has the lowest RMSE at EVERY horizon; " if R["rw_best_all"] else "")
+             + "Clark-West asks a different question (does x add anything beyond M0?), so both can be true.")
+
+    # ------------------------------------------------------------------ 6. noise
+    L.append(head("6. The noise term (Proposal 4.3.3 assumes it is Gaussian)"))
+    nd, cmp_ = R["nd"], R["noise_cmp"]
+    L.append(f"Daily noise: M0 {cmp_['s_eps_m0_bp']:.2f} bp, M1 {cmp_['s_eps_m1_bp']:.2f} bp "
+             f"(degrees-of-freedom-adjusted variance reduction from adding SOFR/FX: {cmp_['variance_reduction'] * 100:.1f}%)")
+    for nm, r_ in nd.iterrows():
+        val = f"{r_['value']:.3f}" if np.isfinite(r_["value"]) else f"p={pv(r_['p_value'])}"
+        L.append(f"  {nm:<22}{val:<12}{'VIOLATED' if r_['violated'] else 'ok'}")
+    L.append("Reading: fat tails and volatility clustering -> use bootstrapped noise in simulation and a conditional")
+    L.append("(GARCH-filtered) EVT step; standardised residuals are saved for it.")
+
+    # ------------------------------------------------------------------ 7. scenarios
+    L.append(head(f"7. Scenarios: SORA in 1 year (5th / median / 95th pct, %), SOFR shock {a.shock_bp:.0f} bp, bootstrapped noise"))
+    sc = R["scenarios"]
+    L.append(f"{'scenario':<10}{'no break':<26}{'level shift (exploratory)'}")
+    for name in sc["scenario"].unique():
+        cells = [f"{r_.p5_pct:5.2f} / {r_.p50_pct:5.2f} / {r_.p95_pct:5.2f}" for r_ in sc[sc["scenario"] == name].itertuples()]
+        L.append(f"{name:<10}{cells[0]:<26}{cells[1]}")
+    L.append(f"Start SORA {df['r'].iloc[-1] * 100:.2f}%, SOFR {df['x'].iloc[-1] * 100:.2f}%. SOFR and FX are conditioned on, not modelled.")
+    L.append("! The linear Gaussian model allows negative rates"
+             + (" (some percentiles above are negative)." if (sc["p5_pct"] < 0).any() else "."))
+
+    # ------------------------------------------------------------------ 8. robustness
+    L.append(head("8. Robustness"))
+    grid, sd, rw_ = R["grid"], R["start_dates"], R["race_windows"]
+    L.append("(a) M0-vs-M1 exclusion test vs lag choice - classical/HAC p-values move a lot with the lags:")
+    L.append(f"{'dr lags':<9}{'dx lags':<9}{'a':<10}{'kappa':<8}{'classical p':<13}{'HAC p'}")
+    for _, r_ in grid.iterrows():
+        L.append(f"{int(r_['p_dr_lags']):<9}{int(r_['q_dx_lags']):<9}{r_['a']:<10.4f}{r_['kappa']:<8.1f}{pv(r_['p_classical']):<13}{pv(r_['p_HAC'])}")
+    L.append("\n(b) Start-date sensitivity (one rate cycle in the sample, so the window matters):")
+    L.append(f"{'start':<12}{'n':<6}{'EG p (const)':<14}{'EG p (trend)':<14}{'GH stat':<9}{'break':<13}{'slope':<7}{'kappa'}")
+    for _, r_ in sd.iterrows():
+        L.append(f"{str(r_['start']):<12}{int(r_['n']):<6}{pv(r_['EG_p_const(BIC)']):<14}{pv(r_['EG_p_trend(BIC)']):<14}"
+                 f"{r_['GH_C_stat']:<9.2f}{str(r_['GH_break']):<13}{r_['slope_r_on_x']:<7.2f}{r_['kappa']:.1f}")
+    L.append("\n(c) Race vs window length (RMSE, bp):")
+    L.append(f"{'window':<9}{'h':<5}{'RW':<8}{'M0':<8}{'M1'}")
+    for _, r_ in rw_.iterrows():
+        L.append(f"{int(r_['window']):<9}{int(r_['h']):<5}{r_['rmse_rw_bp']:<8.1f}{r_['rmse_m0_bp']:<8.1f}{r_['rmse_m1_bp']:.1f}")
+
+    # ------------------------------------------------------------------ bottom line
+    L += ["\n" + "=" * W, "Bottom line", "=" * W]
+    L.append(f"- No break: SORA and SOFR are {'cointegrated' if R['gate_nobreak'] else 'NOT shown to be cointegrated'} "
+             f"(Engle-Granger BIC p = {pv(R['egc_bic'])}; ECM bootstrap p = {pv(coint.loc['no_break', 'p_boot_t_left'])}); "
+             f"the anchor test does not reject (bootstrap p = {pv(nst.loc['no_break', 'p_boot'])}).")
+    L.append(f"- Allowing one level shift ({break_date:%d %b %Y}): cointegration {'holds' if ghC['reject_5pct'] else 'does not hold'} "
+             f"(Gregory-Hansen {ghC['stat']:.2f} vs 5% value {ghC['cv_5pct']:.2f}). Date is data-chosen: check it against MAS policy dates.")
+    L.append(f"- Sensitive to the start date: EG p (const) from {pv(sd['EG_p_const(BIC)'].max())} to {pv(sd['EG_p_const(BIC)'].min())} across starts; "
+             f"slope {sd['slope_r_on_x'].min():.2f} to {sd['slope_r_on_x'].max():.2f}.")
+    L.append("- Race: " + ("random walk is best at every horizon." if R["rw_best_all"] else "see table 5.")
+             + f" Bootstrap Clark-West M1 vs M0 at {a.horizons[0]} day: p = {pv(S.loc[a.horizons[0], 'p_boot M1 vs M0'])}"
+             + (f"; at {a.horizons[-1]} days: p = {pv(S.loc[a.horizons[-1], 'p_boot M1 vs M0'])}." if len(a.horizons) > 1 else "."))
+    L.append("- Headline the data support: no STABLE level anchor over the full window. A SOFR anchor appears only when a regime")
+    L.append("  change is allowed (data-chosen date) or the sample starts later, and its slope then varies a lot.")
+    L.append("- Open decisions: anchor variable (forward points would make CIP hold by construction), SORA field definition.")
+    return "\n".join(L)

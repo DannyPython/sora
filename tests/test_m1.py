@@ -324,12 +324,18 @@ def test_lag_selection_prefers_true_lags():
 # ------------------------------------------------------------------ end to end
 @needs_data
 def test_driver_runs_and_is_reproducible(tmp_path):
-    cmd = [sys.executable, str(ROOT / "run_m1.py"), "--fast", "--seed", "5", "--out", str(tmp_path)]
+    cmd = [sys.executable, str(ROOT / "run_m1.py"), "--fast", "--seed", "5", "--report", "--out", str(tmp_path)]
     a = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=300)
     assert a.returncode == 0, a.stderr[-2000:]
-    for key in ("1. Data checks", "2. Gate", "Gregory-Hansen", "4. Does M1 beat M0?", "5. Out-of-sample race", "Bottom line"):
+    for key in ("headline numbers", "[gate]", "nested_boot_p_no_break",                       # headline
+                "1. Data checks", "2. Gate", "Gregory-Hansen", "4. Does M1 beat M0?", "5. Out-of-sample race", "Bottom line"):
         assert key in a.stdout
     assert all(ord(ch) < 128 for ch in a.stdout)
-    assert (tmp_path / "run_info.json").exists() and (tmp_path / "race_summary.csv").exists()
+    # every number in the report is also on disk
+    for f in ("run_info.json", "headline.csv", "race_summary.csv", "nested_m1_vs_m0.csv", "gate_ecm_cointegration.csv",
+              "scenarios_1y.csv", "gate_slope_rolling500.csv", "noise_m0_vs_m1.csv", "data_checks.csv"):
+        assert (tmp_path / f).exists(), f
+    h = pd.read_csv(tmp_path / "headline.csv")
+    assert list(h.columns) == ["section", "metric", "value"] and h["metric"].is_unique
     b = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=300)
     assert a.stdout == b.stdout                          # fixed seeds -> identical report
