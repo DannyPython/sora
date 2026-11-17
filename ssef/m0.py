@@ -7,7 +7,9 @@ Exact discretisation over one step dt, with a = exp(-kappa dt):
     r_{t+1} = c0 + c1 r_t + eps,  c0 = (1 - a) theta,  c1 = a,
     Var(eps) = sigma^2 (1 - a^2) / (2 kappa).
 
-M0 is calibrated by OLS on this AR(1). Structural parameters (Sec. 5.3):
+M0 is calibrated by OLS on this AR(1), augmented with p lagged daily changes
+(r_t = c0 + c1 r_{t-1} + sum_k phi_k dr_{t-k} + eps; the same M0 as restricted_ecm and race, p = 0 is the
+plain AR(1)). The lags absorb short-run autocorrelation and leave the long-run mapping unchanged (Sec. 5.3):
 
     kappa = -ln(c1)/dt,  theta = c0/(1 - c1),  sigma^2 = 2 kappa Var(eps)/(1 - c1^2).
 
@@ -62,9 +64,10 @@ class M0Fit:
     dt: float
     c0: float
     c1: float
-    s2: float                 # unbiased residual variance, RSS/(n-2)
+    s2: float                 # unbiased residual variance, RSS/(n - 2 - lags)
     cov_c: np.ndarray         # 2x2 covariance of (c0, c1)
     resid: pd.Series          # eps_hat, indexed by the date of r_{t+1}
+    lags: int = 0             # lagged daily changes in the regression (0 = plain AR(1))
 
     @property
     def n(self) -> int:
@@ -100,7 +103,7 @@ class M0Fit:
     def params_table(self, level: float = 0.95) -> pd.DataFrame:
         """Estimates with delta-method standard errors and normal CIs (Sec. 5.5)."""
         z = stats.norm.ppf(0.5 + level / 2.0)
-        s2_var = 2.0 * self.s2 ** 2 / (self.n - 2)       # Var(s2) under Gaussian errors
+        s2_var = 2.0 * self.s2 ** 2 / (self.n - 2 - self.lags)       # Var(s2) under Gaussian errors
         V = np.zeros((3, 3))
         V[:2, :2] = self.cov_c                            # s2 is independent of (c0, c1)
         V[2, 2] = s2_var
@@ -122,27 +125,25 @@ class M0Fit:
         out["ci_high"] = out["estimate"] + z * out["se"]
         return out
 
-    def predict(self, r_t):
-        """One-step conditional mean E[r_{t+1} | r_t] = c0 + c1 r_t."""
-        return self.c0 + self.c1 * np.asarray(r_t)
-
     def simulate(self, r0: float, n_steps: int, n_paths: int, seed: int) -> np.ndarray:
         if not self.valid:
             raise ValueError("c1 not in (0, 1): structural parameters undefined")
         return simulate_vasicek(self.kappa, self.theta, self.sigma, r0, n_steps, n_paths, self.dt, seed)
 
 
-def calibrate(r: pd.Series, dt: float = DT) -> M0Fit:
-    """Calibrate M0 by OLS on the AR(1) of Sec. 6.1, through the project's single OLS routine (`ssef.ols`):
-    M0 is the regression r_t on (1, r_{t-1}), i.e. M1 with every exogenous column dropped."""
+def calibrate(r: pd.Series, dt: float = DT, p: int = 0) -> M0Fit:
+    """Calibrate M0 by OLS through the project's single OLS routine (`ssef.ols`): r_t on
+    (1, r_{t-1}, dr_{t-1}, ..., dr_{t-p}), i.e. M1 with every SOFR/FX column dropped. p = 0 is the AR(1) of Sec. 6.1."""
     r = pd.Series(r).dropna().astype(float)
-    if len(r) < 10:
-        raise ValueError("need at least 10 observations")
-    y = r.iloc[1:]
-    X = pd.DataFrame({"const": 1.0, "r_lag": r.iloc[:-1].to_numpy()}, index=y.index)
+    if len(r) < 10 + p:
+        raise ValueError("need at least 10 observations beyond the lags")
+    v, dr = r.to_numpy(), r.diff().to_numpy()
+    t = np.arange(p + 1, len(v))
+    y = r.iloc[p + 1:]
+    X = pd.DataFrame({"const": 1.0, "r_lag": v[t - 1]} | {f"dr_{k}": dr[t - k] for k in range(1, p + 1)}, index=y.index)
     f = fit_ols(y, X)
-    return M0Fit(dt=dt, c0=f.c("const"), c1=f.c("r_lag"), s2=f.s2, cov_c=f.cov,
-                 resid=pd.Series(f.resid.to_numpy(), index=y.index, name="eps"))
+    return M0Fit(dt=dt, c0=f.c("const"), c1=f.c("r_lag"), s2=f.s2, cov_c=f.cov[:2, :2],
+                 resid=pd.Series(f.resid.to_numpy(), index=y.index, name="eps"), lags=p)
 
 
 # ------------------------------------------------------------------ simulation

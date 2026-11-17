@@ -1,9 +1,11 @@
 """Out-of-sample race at several horizons (Blueprint Sec. 6.6; Proposal 4.5.1).
 
-Direct h-step forecasts of r_{T+h} from information at origin T, rolling window of `window` training pairs:
-  RW : r_T                                   (random-walk benchmark - the third competitor)
-  M0 : r_{T+h} = c + c1 r_T + e               (classical level reversion, fixed anchor)
-  M1 : r_{T+h} = c + c1 r_T + c2 x_T [+ c3 z_T] + e   (anchor moves with SOFR [and FX])
+Direct h-step forecasts of r_{T+h} from information at origin T, rolling window of `window` training pairs.
+M0 and M1 are the estimated ECM (restricted_ecm), with regressors dated at the origin (restricted_ecm.origin_design):
+  RW : r_T                                                  (random-walk benchmark - the third competitor)
+  M0 : r_{T+h} on [1, r_T, dr_T .. dr_{T-p+1}]              (classical Vasicek on SORA alone)
+  M1 : M0 + [x_T, dx_T .. dx_{T-q}, z_T]                     (anchor moves with SOFR and FX)
+M0 = M1 minus restricted_ecm.nested_columns, so the two cannot drift apart. p = 0 gives the Proposal's AR(1).
 The anchor shows up in slow moves, so horizons 1, 20 and 60 days are used by default.
 Training pairs at origin T only use targets already observed (t + h <= T): no look-ahead.
 
@@ -19,6 +21,7 @@ import pandas as pd
 from scipy import stats
 
 from .nested import NullDGP
+from .restricted_ecm import nested_columns, origin_design
 
 PAIRS = (("M0 vs RW", "rw", "m0"), ("M1 vs RW", "rw", "m1"), ("M1 vs M0", "m0", "m1"))
 
@@ -38,15 +41,19 @@ def _rolling(R, X, h, window):
     return T, np.einsum("ti,ti->t", X[T], beta)
 
 
-def direct_forecasts(r, x, z, h: int, window: int = 500, with_z: bool = True) -> dict:
-    """Arrays for one horizon (decimals). Computation is done in percent for conditioning."""
-    R, XS = np.asarray(r) * 100.0, np.asarray(x) * 100.0
-    one = np.ones(len(R))
-    X0 = np.column_stack([one, R])
-    cols = [one, R, XS] + ([np.asarray(z) * 100.0] if with_z and z is not None else [])
-    T, f0 = _rolling(R, X0, h, window)
-    _, f1 = _rolling(R, np.column_stack(cols), h, window)
-    return {"T": T, "actual": R[T + h] / 100.0, "rw": R[T] / 100.0, "m0": f0 / 100.0, "m1": f1 / 100.0}
+def direct_forecasts(r, x, z, h: int, window: int = 500, with_z: bool = True, p: int = 0, q: int = 0) -> dict:
+    """RW, M0 and M1 forecasts for one horizon (decimals); x=None gives RW and M0 only. "T" holds the origins
+    as positions in r. Computation is done in percent for conditioning."""
+    pct = lambda v: None if v is None else np.asarray(v, float) * 100.0
+    R = pct(r)
+    X1, names, s = origin_design(R, pct(x), pct(z) if with_z else None, p, q, with_z)
+    m0_cols = [i for i, nm in enumerate(names) if nm not in nested_columns(names)]
+    Rs = R[s:]
+    T, f0 = _rolling(Rs, X1[:, m0_cols], h, window)
+    out = {"T": T + s, "actual": Rs[T + h] / 100.0, "rw": Rs[T] / 100.0, "m0": f0 / 100.0}
+    if x is not None:
+        out["m1"] = _rolling(Rs, X1, h, window)[1] / 100.0
+    return out
 
 
 def _nw_t(f: np.ndarray, lags: int) -> float:
@@ -63,17 +70,18 @@ def clark_west(actual, f_small, f_large, h: int) -> float:
     return _nw_t(e_s ** 2 - (e_l ** 2 - (f_small - f_large) ** 2), max(h - 1, 0))
 
 
-def _race_stats(r, x, z, hs, window, with_z):
+def _race_stats(r, x, z, hs, window, with_z, p, q):
     out = {}
     for h in hs:
-        fc = direct_forecasts(r, x, z, h, window, with_z)
+        fc = direct_forecasts(r, x, z, h, window, with_z, p, q)
         out[h] = {name: clark_west(fc["actual"], fc[s], fc[l], h) for name, s, l in PAIRS}
     return out
 
 
 def run_race(df: pd.DataFrame, horizons=(1, 20, 60), window: int = 500, with_z: bool = True, B: int = 0,
-             null: str = "unit_root", p: int = 2, block: int = 10, seed: int = 2027) -> dict:
+             null: str = "unit_root", p: int = 2, q: int = 0, block: int = 10, seed: int = 2027) -> dict:
     """Returns {'summary': DataFrame per horizon, 'forecasts': {h: DataFrame}, 'boot_t': {...}}.
+    p, q: lags of dr and dx, the same as in the estimated ECM.
     B = number of bootstrap replications (0 = skip; the normal p-values are then NOT trustworthy)."""
     with_z = with_z and "z" in df
     r, x = df["r"].to_numpy(), df["x"].to_numpy()
@@ -81,7 +89,7 @@ def run_race(df: pd.DataFrame, horizons=(1, 20, 60), window: int = 500, with_z: 
     idx = df.index
     rows, fcs = [], {}
     for h in horizons:
-        fc = direct_forecasts(r, x, z, h, window, with_z)
+        fc = direct_forecasts(r, x, z, h, window, with_z, p, q)
         fcs[h] = pd.DataFrame({"origin": idx[fc["T"]], "actual": fc["actual"], "rw": fc["rw"], "m0": fc["m0"],
                                "m1": fc["m1"]}, index=idx[fc["T"] + h])
         row = {"h": h, "n_oos": len(fc["T"])}
@@ -97,14 +105,12 @@ def run_race(df: pd.DataFrame, horizons=(1, 20, 60), window: int = 500, with_z: 
         summary[f"p_boot {name}"] = np.nan
     boot = {}
     if B and B > 0:
-        # pure-M0 null: drop every exogenous column; r evolves as an AR(p) in differences (unit root imposed if asked)
-        q = 0
-        restrict = ["x_lag", "dx0"] + (["z"] if with_z else [])
-        dgp = NullDGP(df, p, q, with_z, restrict, null, block)
+        # M0 null: every SOFR/FX column dropped; r evolves as an AR(p) in differences (unit root imposed if asked)
+        dgp = NullDGP(df, p, q, with_z, None, null, block)
         rng = np.random.default_rng(seed)
         acc = {h: {name: np.empty(B) for name, _, _ in PAIRS} for h in horizons}
         for b in range(B):
-            st = _race_stats(dgp.draw(rng), x, z, horizons, window, with_z)
+            st = _race_stats(dgp.draw(rng), x, z, horizons, window, with_z, p, q)
             for h in horizons:
                 for name, _, _ in PAIRS:
                     acc[h][name][b] = st[h][name]
@@ -115,20 +121,18 @@ def run_race(df: pd.DataFrame, horizons=(1, 20, 60), window: int = 500, with_z: 
     return {"summary": summary, "forecasts": fcs, "boot_t": boot, "null": null, "B": B, "window": window}
 
 
-def m0_vs_rw(r, horizons=(1, 20, 60), window: int = 250) -> pd.DataFrame:
-    """M0 alone against the random walk at several horizons (direct h-step forecasts, rolling window).
+def m0_vs_rw(r, horizons=(1, 20, 60), window: int = 500, p: int = 0) -> pd.DataFrame:
+    """M0 alone against the random walk at several horizons (direct_forecasts without SOFR, rolling window).
     The anchor of a mean-reverting model only shows up in slow moves, so one day is not enough."""
-    R = np.asarray(pd.Series(r).dropna(), dtype=float) * 100.0
-    X0 = np.column_stack([np.ones(len(R)), R])
+    r = np.asarray(pd.Series(r).dropna(), dtype=float)
     rows = []
     for h in horizons:
-        if window + h + 20 >= len(R):
+        if window + p + h + 20 >= len(r):
             continue
-        T, f0 = _rolling(R, X0, h, window)
-        actual = R[T + h]
-        rows.append({"h": h, "n_oos": len(T),
-                     "rmse_rw_bp": float(np.sqrt(np.mean((actual - R[T]) ** 2)) * 100.0),
-                     "rmse_m0_bp": float(np.sqrt(np.mean((actual - f0) ** 2)) * 100.0)})
+        fc = direct_forecasts(r, None, None, h, window, False, p)
+        rows.append({"h": h, "n_oos": len(fc["T"]),
+                     "rmse_rw_bp": float(np.sqrt(np.mean((fc["actual"] - fc["rw"]) ** 2)) * 1e4),
+                     "rmse_m0_bp": float(np.sqrt(np.mean((fc["actual"] - fc["m0"]) ** 2)) * 1e4)})
     out = pd.DataFrame(rows).set_index("h")
     out["m0_vs_rw_pct"] = (out["rmse_m0_bp"] / out["rmse_rw_bp"] - 1.0) * 100.0
     return out

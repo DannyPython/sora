@@ -22,7 +22,7 @@ Refreshing the data needs MAS API keys: copy `.env.example` to `.env`, fill it i
 |---|---|
 | `ssef/loaders.py` | All loaders (SORA, SOFR, USD/SGD), the as-of SOFR merge on publication dates, `build_dataset`, data checks |
 | `ssef/ols.py` | The one OLS routine (HAC, nested F, delta method). M0 is M1 with columns dropped |
-| `ssef/m0.py` | M0: AR(1) calibration, structural parameters, delta-method CIs, exact simulator (forecasts live in `race.py`) |
+| `ssef/m0.py` | M0: calibration (AR(1) + p lagged changes, the same M0 as the ECM), structural parameters, delta-method CIs, exact simulator (forecasts live in `race.py`) |
 | `ssef/gate.py` | M0 gate: ADF/KPSS, `adf_gate` (c1 with bootstrap CI; `p=0` is the pure AR(1)) |
 | `ssef/report.py` | M0 plain-language report (headline is the bootstrap view when the gate fails) |
 | `ssef/restricted_ecm.py` | M1 error-correction regression, level shift, lag selection; M0 = the same regression with columns dropped |

@@ -7,11 +7,12 @@
   z (FX return, I(0)) enters as a short-run term: g.  Levels-equivalent beta2 = -g/a  (see Blueprint 5.3)
   p lags of dr absorb the negative daily autocorrelation (the ADF-style augmentation).
 
-M0 is the SAME regression with columns dropped, on the SAME sample (see nested_columns):
-  'anchor' : drop x_{i-1} and z               -> H0: beta1 = beta2 = 0, short-run dx still allowed (Blueprint 5.4)
-  'all'    : drop x_{i-1}, every dx, and z    -> pure M0 (AR(p) in differences)
+M0 is the SAME regression with every SOFR and FX column dropped, on the SAME sample (see nested_columns):
+    dr_i = c + a r_{i-1} + sum_{k=1..p} phi_k dr_{i-k} + e_i       (classical Vasicek on SORA alone, p lags)
+so H0 "M0 is enough" sets x_{i-1}, every dx and z to zero. p = 0 is the Proposal's AR(1).
 
 x_i is SOFR already published before SORA date i, so dx_i is known before r_i (no look-ahead).
+For forecasting from origin T, origin_design gives the same columns using only data known at T.
 The linear Gaussian model allows negative rates (Blueprint 5.5).
 """
 from __future__ import annotations
@@ -26,26 +27,43 @@ from .ols import OLSFit, delta_se, fit_ols
 
 
 
+def _columns(r, x, z, p: int, q: int, with_z: bool, shift, idx, c: int):
+    """ECM regressors for target rows idx. The same-day terms (dx, z) are taken c rows earlier: c = 0 in the
+    estimated ECM, c = 1 when forecasting (they are not known yet at the origin). x=None gives M0's columns."""
+    dr = np.r_[np.nan, np.diff(r)]
+    cols, names = [np.ones(len(idx))], ["const"]
+    cols.append(r[idx - 1]); names.append("r_lag")
+    if x is not None:
+        dx = np.r_[np.nan, np.diff(x)]
+        cols.append(x[idx - 1]); names.append("x_lag")
+    if shift is not None:
+        cols.append(np.asarray(shift, float)[idx - 1]); names.append("shift")
+    if x is not None:
+        for j in range(q + 1):
+            cols.append(dx[idx - j - c]); names.append(f"dx{j}")
+    if with_z:
+        cols.append(z[idx - c]); names.append("z")
+    for k in range(1, p + 1):
+        cols.append(dr[idx - k]); names.append(f"dr_{k}")
+    return np.column_stack(cols), names
+
+
 def design_arrays(r, x, z, p: int, q: int, with_z: bool, shift=None):
     """(y, X, names, s): y = dr over rows s..n-1; X columns in the order below. Pure arrays (fast).
     shift: optional 0/1 array (level-shift dummy D); enters the long-run relation as D_{i-1}."""
-    n = len(r)
     s = max(p, q) + 1
-    dr = np.r_[np.nan, np.diff(r)]
-    dx = np.r_[np.nan, np.diff(x)]
-    idx = np.arange(s, n)
-    cols, names = [np.ones(len(idx))], ["const"]
-    cols.append(r[idx - 1]); names.append("r_lag")
-    cols.append(x[idx - 1]); names.append("x_lag")
-    if shift is not None:
-        cols.append(np.asarray(shift, float)[idx - 1]); names.append("shift")
-    for j in range(q + 1):
-        cols.append(dx[idx - j]); names.append(f"dx{j}")
-    if with_z:
-        cols.append(z[idx]); names.append("z")
-    for k in range(1, p + 1):
-        cols.append(dr[idx - k]); names.append(f"dr_{k}")
-    return dr[idx], np.column_stack(cols), names, s
+    idx = np.arange(s, len(r))
+    X, names = _columns(r, x, z, p, q, with_z, shift, idx, 0)
+    return np.diff(r)[idx - 1], X, names, s
+
+
+def origin_design(r, x, z, p: int, q: int, with_z: bool):
+    """(X, names, s): row j holds the regressors known at forecast origin T = s + j (T = s..n-1):
+    r_T, x_T, dx_{T-j}, z_T and dr_T..dr_{T-p+1}. Same column names as design_arrays, so nested_columns
+    gives M0. No level-shift column: a break date chosen from the full sample would leak the future."""
+    s = max(p, q + 1 if x is not None else 0)
+    X, names = _columns(r, x, z, p, q, with_z and z is not None, None, np.arange(s, len(r)) + 1, 1)
+    return X, names, s
 
 
 def shift_dummy(df: pd.DataFrame, break_date):
@@ -60,15 +78,10 @@ def design(df: pd.DataFrame, p: int = 2, q: int = 0, with_z: bool = True, break_
     return pd.Series(y, index=idx, name="dr"), pd.DataFrame(X, index=idx, columns=names)
 
 
-def nested_columns(names, scope: str = "anchor"):
-    """Columns removed to get M0 from M1. The level-shift column 'shift' is never removed: an M0 that is
-    allowed one regime change in its mean is the fair null once a break has been admitted."""
-    drop = [c for c in names if c in ("x_lag", "z")]
-    if scope == "all":
-        drop += [c for c in names if c.startswith("dx")]
-    elif scope != "anchor":
-        raise ValueError("scope must be 'anchor' or 'all'")
-    return drop
+def nested_columns(names):
+    """Columns removed to get M0 from M1: every SOFR (level and changes) and FX column. The level-shift column
+    'shift' is never removed: an M0 allowed one regime change in its mean is the fair null once a break is admitted."""
+    return [c for c in names if c in ("x_lag", "z") or c.startswith("dx")]
 
 
 @dataclass(frozen=True)

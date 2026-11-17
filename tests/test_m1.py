@@ -53,7 +53,8 @@ def test_nested_f_matches_statsmodels_and_m0_is_columns_dropped():
     df = sim_system(400, seed=2)
     y, X = ecm.design(df, 2, 0, True)
     full = fit_ols(y, X)
-    drop = ecm.nested_columns(full.names, "anchor")
+    drop = ecm.nested_columns(full.names)
+    assert set(drop) == {"x_lag", "dx0", "z"}                                               # M0 has no SOFR at all
     red = subset(full, drop)
     assert red.n == full.n and red.names == tuple(c for c in full.names if c not in drop)   # same sample
     ours = exclusion_f(full, red)
@@ -176,7 +177,7 @@ def test_bootstrap_anchor_test_has_size_and_classical_f_does_not():
     for s in range(R):
         df = sim_system(300, seed=200 + s, cointegrated=False)
         m = ecm.fit_ecm(df, 1, 0, True)
-        classical_rej += exclusion_f(m.fit, subset(m.fit, ecm.nested_columns(m.fit.names, "anchor")))["p_classical"] < 0.05
+        classical_rej += exclusion_f(m.fit, subset(m.fit, ecm.nested_columns(m.fit.names)))["p_classical"] < 0.05
         boot_rej += nested.anchor_test(df, 1, 0, True, B=99, seed=s)["p_boot_F"] < 0.05
     assert boot_rej / R <= 0.10                       # close to the nominal 5%
     assert classical_rej >= boot_rej + 3              # the classical test over-rejects with an I(1) regressor
@@ -186,10 +187,10 @@ def test_bootstrap_statistic_equals_classical_f_on_actual_data():
     """The F computed inside the bootstrap must be the ordinary nested F on the actual sample."""
     df = sim_system(400, seed=15)
     for brk in (None, df.index[200]):
-        dgp = nested.NullDGP(df, 2, 0, True, ["x_lag", "z"], "unit_root", break_date=brk)
-        F_boot_code, t = nested._stats(dgp.y, dgp.X, dgp.names, ["x_lag", "z"], "x_lag")
+        dgp = nested.NullDGP(df, 2, 0, True, None, "unit_root", break_date=brk)
+        F_boot_code, t = nested._stats(dgp.y, dgp.X, dgp.names, dgp.restrict, "x_lag")
         m = ecm.fit_ecm(df, 2, 0, True, break_date=brk)
-        ours = exclusion_f(m.fit, subset(m.fit, ecm.nested_columns(m.fit.names, "anchor")))
+        ours = exclusion_f(m.fit, subset(m.fit, ecm.nested_columns(m.fit.names)))
         assert F_boot_code == pytest.approx(ours["F"]) and t == pytest.approx(m.fit.tstat("x_lag"))
 
 
@@ -203,7 +204,7 @@ def test_bootstrap_cointegration_test_power():
 
 def test_null_dgp_keeps_exogenous_series_and_is_seeded():
     df = sim_system(300, seed=9)
-    dgp = nested.NullDGP(df, 2, 0, True, ["x_lag", "z"], "unit_root")
+    dgp = nested.NullDGP(df, 2, 0, True, None, "unit_root")
     r1, r2 = dgp.draw(np.random.default_rng(3)), dgp.draw(np.random.default_rng(3))
     assert len(r1) == len(df) and (r1 == r2).all()
     assert r1[:dgp.s] == pytest.approx(df.r.to_numpy()[:dgp.s])
@@ -224,17 +225,55 @@ def test_rolling_matches_bruteforce_ols():
         assert f[k] == pytest.approx(X[t] @ beta, rel=1e-8)
 
 
-def test_race_forecasts_do_not_look_ahead():
+@pytest.mark.parametrize("p,q", [(0, 0), (3, 1)])
+def test_race_forecasts_do_not_look_ahead(p, q):
     df = sim_system(400, seed=11)
     r, x, z = df.r.to_numpy(), df.x.to_numpy(), df.z.to_numpy()
-    base = race.direct_forecasts(r, x, z, 5, 100, True)
+    base = race.direct_forecasts(r, x, z, 5, 100, True, p, q)
     k = 300
-    r2 = r.copy()
-    r2[k:] += 0.5
-    pert = race.direct_forecasts(r2, x, z, 5, 100, True)
-    ok = base["T"] < k                                   # origins before the perturbation
-    for key in ("rw", "m0", "m1"):
-        assert pert[key][ok] == pytest.approx(base[key][ok])
+    for name, arr in (("r", r), ("x", x), ("z", z)):      # change the future of each input in turn
+        bumped = arr.copy()
+        bumped[k:] += 0.5
+        args = {"r": r, "x": x, "z": z} | {name: bumped}
+        pert = race.direct_forecasts(args["r"], args["x"], args["z"], 5, 100, True, p, q)
+        ok = base["T"] < k                               # origins before the perturbation
+        for key in ("rw", "m0", "m1"):
+            assert pert[key][ok] == pytest.approx(base[key][ok])
+
+
+def test_origin_design_uses_only_data_known_at_the_origin():
+    df = sim_system(60, seed=16)
+    r, x, z = df.r.to_numpy(), df.x.to_numpy(), df.z.to_numpy()
+    X, names, s = ecm.origin_design(r, x, z, 3, 1, True)
+    assert names == ["const", "r_lag", "x_lag", "dx0", "dx1", "z", "dr_1", "dr_2", "dr_3"]
+    dr, dx = np.diff(r), np.diff(x)                      # dr[t - 1] = r_t - r_{t-1}
+    T = 40
+    expected = [1, r[T], x[T], dx[T - 1], dx[T - 2], z[T], dr[T - 1], dr[T - 2], dr[T - 3]]
+    assert X[T - s] == pytest.approx(expected)
+    X0, names0, s0 = ecm.origin_design(r, None, None, 3, 1, False)
+    assert names0 == ["const", "r_lag", "dr_1", "dr_2", "dr_3"] and X0[T - s0] == pytest.approx([1, r[T], *expected[6:]])
+
+
+def test_direct_forecasts_match_bruteforce_ols_on_the_ecm_columns():
+    df = sim_system(300, seed=17)
+    r, x, z = df.r.to_numpy(), df.x.to_numpy(), df.z.to_numpy()
+    p, q, h, w = 2, 1, 3, 120
+    fc = race.direct_forecasts(r, x, z, h, w, True, p, q)
+    X, names, s = ecm.origin_design(r, x, z, p, q, True)
+    m0_cols = [i for i, nm in enumerate(names) if nm not in ecm.nested_columns(names)]
+    for k in (0, 25, len(fc["T"]) - 1):
+        T = fc["T"][k]
+        rows = np.arange(T - h - w + 1, T - h + 1)       # training origins whose target r_{t+h} is already known
+        for key, cols in (("m1", list(range(len(names)))), ("m0", m0_cols)):
+            beta = np.linalg.lstsq(X[rows - s][:, cols], r[rows + h], rcond=None)[0]
+            assert fc[key][k] == pytest.approx(X[T - s][cols] @ beta, rel=1e-8)
+    assert fc["rw"] == pytest.approx(r[fc["T"]]) and fc["actual"] == pytest.approx(r[fc["T"] + h])
+
+
+def test_anchor_test_drops_every_sofr_and_fx_column():
+    df = sim_system(300, seed=18)
+    out = nested.anchor_test(df, 1, 1, True, B=9, seed=1)
+    assert set(out["restrict"]) == {"x_lag", "dx0", "dx1", "z"}
 
 
 def test_clark_west_formula_and_sign():

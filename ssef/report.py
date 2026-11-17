@@ -92,7 +92,7 @@ def format_report(r: pd.Series, tests: pd.DataFrame, fit: m0.M0Fit, mh: pd.DataF
         else:
             out.append("OLS c1 is outside (0, 1): kappa, theta and sigma are undefined (Blueprint 5.3).")
     else:
-        out.append(_head("2. Calibrated M0 parameters  (OLS on AR(1), 95% confidence interval)"))
+        out.append(_head(f"2. Calibrated M0 parameters  (OLS, {fit.lags} lagged daily changes, 95% confidence interval)"))
         if fit.valid:
             def row(label, est, name, scale=1.0, nd=2, unit=""):
                 lo, hi = tab.loc[name, "ci_low"] * scale, tab.loc[name, "ci_high"] * scale
@@ -103,7 +103,7 @@ def format_report(r: pd.Series, tests: pd.DataFrame, fit: m0.M0Fit, mh: pd.DataF
             out.append(row("kappa  reversion speed (per year)", fit.kappa, "kappa"))
             out.append(row("theta  long-run mean of SORA", fit.theta, "theta", 100, 2, "%"))
             out.append(row("sigma  volatility (bp per sqrt year)", fit.sigma, "sigma", 1e4, 0))
-            out.append(row("c1     daily persistence (AR(1))", fit.c1, "c1", 1, 4))
+            out.append(row("c1     daily persistence", fit.c1, "c1", 1, 4))
             out.append(f"Half-life of a shock: {fit.half_life_steps:.0f} business days ({hl:.2f} year)")
             if ag is not None:
                 out.append(f"kappa from bias-corrected c1: {ag.kappa_bc():.2f} per year (OLS estimate above is biased upward)")
@@ -126,7 +126,7 @@ def format_report(r: pd.Series, tests: pd.DataFrame, fit: m0.M0Fit, mh: pd.DataF
                else "M0 is worse than 'tomorrow = today'")
     out.append(_head("3. Out-of-sample forecast, 1 day ahead  (M0 side of Block 7)"))
     out.append(f"Rolling window of {window} days, {int(one['n_oos'])} forecasts. Error = typical miss in basis points (bp).")
-    out.append(f"{'M0 (Vasicek AR(1))':<26}{one['rmse_m0_bp']:>7.2f} bp")
+    out.append(f"{'M0 (classical Vasicek)':<26}{one['rmse_m0_bp']:>7.2f} bp")
     out.append(f"{'Random walk benchmark':<26}{one['rmse_rw_bp']:>7.2f} bp   ({rel * 100:+.1f}% vs random walk)")
     out.append(f"Reading: {verdict}.")
     slow = mh.drop(index=1)

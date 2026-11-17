@@ -38,6 +38,16 @@ def test_calibrate_matches_statsmodels():
     assert fit.resid.index.equals(r.index[1:])
 
 
+def test_calibrate_with_lags_matches_statsmodels():
+    r = ar1(phi=(0.3, -0.2), seed=4)
+    fit = m0.calibrate(r, p=2)
+    v, dr = r.to_numpy(), r.diff().to_numpy()
+    t = np.arange(3, len(v))
+    res = sm.OLS(v[t], np.column_stack([np.ones(len(t)), v[t - 1], dr[t - 1], dr[t - 2]])).fit()
+    assert (fit.c0, fit.c1, fit.s2) == pytest.approx((res.params[0], res.params[1], res.mse_resid))
+    assert fit.cov_c == pytest.approx(res.cov_params()[:2, :2]) and fit.lags == 2 and fit.n == len(t)
+
+
 def test_structural_round_trip_and_invalid_c1():
     kappa, theta, sigma = 3.0, 0.025, 0.012
     a = np.exp(-kappa * DT)

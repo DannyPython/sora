@@ -2,7 +2,7 @@
 M0 side of Block 7 (rolling out-of-sample forecast). Every result comes from this script.
 
     python run_m0.py [--start 2024-01-01] [--end 2026-10-08] [--window 500] [--seed 2027]
-    python run_m0.py --lags 0          # pure AR(1) gate instead of the BIC-augmented one
+    python run_m0.py --lags 0          # the Proposal's plain AR(1) instead of the BIC-augmented M0
     python run_m0.py --n-boot 99       # faster gate while testing
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ def main():
     ap.add_argument("--dt", type=float, default=loaders.DT, help="year fraction per observation")
     ap.add_argument("--window", type=int, default=500, help="rolling training window (observations), same default as run_m1")
     ap.add_argument("--seed", type=int, default=2027)
-    ap.add_argument("--lags", default="bic", help="lagged differences in the gate regression: an integer, 'bic' (default) or 0 for the pure AR(1)")
+    ap.add_argument("--lags", default="bic", help="lagged differences in M0 (gate, calibration and forecasts): an integer, 'bic' (default) or 0 for the plain AR(1)")
     ap.add_argument("--n-boot", type=int, default=299, help="bootstrap draws per grid point in the gate")
     ap.add_argument("--horizons", type=int, nargs="+", default=[1, 20, 60], help="horizons (days) of the M0 vs random-walk table; 1 is always added")
     ap.add_argument("--out", default="results/m0")
@@ -41,12 +41,12 @@ def main():
     tests = gate.unit_root_tests(r)
     ag = gate.adf_gate(r, p=None if str(a.lags).lower() == "bic" else int(a.lags), n_boot=a.n_boot, seed=a.seed)
 
-    # Block 3: calibration
-    fit = m0.calibrate(r, dt=a.dt)
+    # Block 3: calibration (same lags as the gate)
+    fit = m0.calibrate(r, dt=a.dt, p=ag.lags)
     tab = fit.params_table()
 
     # Block 7 (M0 side): rolling direct forecasts vs the random walk
-    mh = race.m0_vs_rw(r, tuple(sorted({1, *a.horizons})), a.window)
+    mh = race.m0_vs_rw(r, tuple(sorted({1, *a.horizons})), a.window, p=ag.lags)
 
     # Scenario-MC building block (Block 8): 1-year-ahead simulated SORA under M0
     sim_q = None
@@ -57,7 +57,7 @@ def main():
     print(report.format_report(r, tests, fit, mh, a.window, sim_q, a.seed, ag))
     if a.verbose:
         print("\n== Raw tables ==\nunit-root tests:\n" + tests.to_string()
-              + f"\n\nAR(1) / structural parameters (n = {fit.n}):\n" + tab.to_string())
+              + f"\n\nM0 / structural parameters (n = {fit.n}, {fit.lags} lags):\n" + tab.to_string())
 
     # Outputs + provenance (Blueprint 8)
     tab.to_csv(out / "m0_params.csv")

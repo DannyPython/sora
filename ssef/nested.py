@@ -5,7 +5,7 @@ regressor is I(1) and the long-run relation is absent, so its p-value is not a v
 reference distribution is BUILT: data are re-generated under the null, the same statistic is recomputed, and
 the p-value is the share of re-generated statistics at least as extreme.
 
-  anchor_test               H0: x_lag = z = 0 in the ECM (M0 = M1 with those columns dropped, same sample)
+  anchor_test               H0: every SOFR and FX coefficient is 0 (M0 = M1 minus nested_columns, same sample)
   cointegration_ecm_test    H0: r_lag = x_lag = 0 (no levels relation at all): F (Pesaran-Shin-Smith type) and
                             the t-test on r_lag (Banerjee-Dolado-Mestre type), bootstrap critical values
 
@@ -19,7 +19,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .restricted_ecm import design_arrays, shift_dummy
+from .restricted_ecm import design_arrays, nested_columns, shift_dummy
 
 
 def block_idx(n: int, block: int, rng) -> np.ndarray:
@@ -46,9 +46,10 @@ def _stats(y, X, names, restrict, tcol="r_lag"):
 
 
 class NullDGP:
-    """Restricted ECM + block-resampled residuals -> pseudo r paths that satisfy H0."""
+    """Restricted ECM + block-resampled residuals -> pseudo r paths that satisfy H0.
+    restrict=None drops nested_columns (the null is M0)."""
 
-    def __init__(self, df: pd.DataFrame, p: int, q: int, with_z: bool, restrict, null: str = "unit_root",
+    def __init__(self, df: pd.DataFrame, p: int, q: int, with_z: bool, restrict=None, null: str = "unit_root",
                  block: int = 10, break_date=None):
         if null not in ("unit_root", "fitted"):
             raise ValueError("null must be 'unit_root' or 'fitted'")
@@ -59,7 +60,8 @@ class NullDGP:
         self.shift = shift_dummy(df, break_date)
         y, X, names, s = design_arrays(self.r, self.x, self.z, p, q, self.with_z, self.shift)
         self.y, self.X, self.names, self.s = y, X, names, s
-        drop = set(restrict) | ({"r_lag"} if null == "unit_root" else set())
+        self.restrict = nested_columns(names) if restrict is None else list(restrict)
+        drop = set(self.restrict) | ({"r_lag"} if null == "unit_root" else set())
         self.null_names = [nm for nm in names if nm not in drop]
         cols = [names.index(nm) for nm in self.null_names]
         Xn = X[:, cols]
@@ -101,12 +103,13 @@ class NullDGP:
 
 def _bootstrap(df, p, q, with_z, restrict, null, B, block, seed, break_date, tcol="r_lag") -> dict:
     dgp = NullDGP(df, p, q, with_z, restrict, null, block, break_date)
+    restrict = dgp.restrict
     F_obs, t_obs = _stats(dgp.y, dgp.X, dgp.names, restrict, tcol)
     rng = np.random.default_rng(seed)
     Fb, tb = np.empty(B), np.empty(B)
     for i in range(B):
         Fb[i], tb[i] = dgp.stats(dgp.draw(rng), restrict, tcol)
-    return {"F": F_obs, "t": t_obs, "B": B, "null": null, "block": block,
+    return {"F": F_obs, "t": t_obs, "B": B, "null": null, "block": block, "restrict": restrict,
             "p_boot_F": float((1 + np.sum(Fb >= F_obs)) / (B + 1)),
             "p_boot_t_left": float((1 + np.sum(tb <= t_obs)) / (B + 1)),       # t on r_lag: more negative = evidence
             "p_boot_t_abs": float((1 + np.sum(np.abs(tb) >= abs(t_obs))) / (B + 1)),
@@ -116,11 +119,8 @@ def _bootstrap(df, p, q, with_z, restrict, null, B, block, seed, break_date, tco
 
 def anchor_test(df, p: int = 2, q: int = 0, with_z: bool = True, null: str = "unit_root", B: int = 499,
                 block: int = 10, seed: int = 2027, break_date=None) -> dict:
-    """H0: beta1 = beta2 = 0 (x_lag and z excluded). Returns the bootstrap F p-value (the valid one)."""
-    restrict = ["x_lag"] + (["z"] if with_z and "z" in df else [])
-    out = _bootstrap(df, p, q, with_z, restrict, null, B, block, seed, break_date, tcol="x_lag")
-    out["restrict"] = restrict
-    return out
+    """H0: M0 is enough (SOFR level, SOFR changes and FX all excluded). Returns the bootstrap F p-value (the valid one)."""
+    return _bootstrap(df, p, q, with_z, None, null, B, block, seed, break_date, tcol="x_lag")
 
 
 def cointegration_ecm_test(df, p: int = 2, q: int = 0, with_z: bool = True, B: int = 499, block: int = 10,
@@ -128,6 +128,4 @@ def cointegration_ecm_test(df, p: int = 2, q: int = 0, with_z: bool = True, B: i
     """H0: no levels relation (r_lag = x_lag = 0, plus the shift dummy if one is included).
     F on the excluded levels (PSS-type) and left-tail t on r_lag (BDM-type), bootstrap p-values."""
     restrict = ["r_lag", "x_lag"] + (["shift"] if break_date is not None else [])
-    out = _bootstrap(df, p, q, with_z, restrict, "unit_root", B, block, seed, break_date, tcol="r_lag")
-    out["restrict"] = restrict
-    return out
+    return _bootstrap(df, p, q, with_z, restrict, "unit_root", B, block, seed, break_date, tcol="r_lag")

@@ -15,9 +15,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ssef import cointegration as C
+from ssef import cointegration as C, restricted_ecm
 from ssef import loaders, nested, noise, provenance, race, robustness, simulate
-from ssef import restricted_ecm as ecm
 from ssef.ols import exclusion_f, exclusion_wald_hac, subset
 
 W = 78
@@ -66,7 +65,7 @@ def main():
     with_z = "z" in df
     chk = loaders.data_checks(df)
 
-    lag_tab = ecm.select_lags(df, a.pmax, a.q, with_z)
+    lag_tab = restricted_ecm.select_lags(df, a.pmax, a.q, with_z)
     p = int(lag_tab["bic"].idxmin()) if str(a.p).lower() == "bic" else int(a.p)
 
     L = ["=" * W, " M1 (policy-anchored Vasicek, error-correction form) on SORA", "=" * W]
@@ -138,8 +137,8 @@ def main():
 
     # ------------------------------------------------------------------ 3. ECM estimates
     L.append(head("3. M1 error-correction estimates"))
-    m_nb = ecm.fit_ecm(df, p, a.q, with_z)
-    m_br = ecm.fit_ecm(df, p, a.q, with_z, break_date=break_date)
+    m_nb = restricted_ecm.fit_ecm(df, p, a.q, with_z)
+    m_br = restricted_ecm.fit_ecm(df, p, a.q, with_z, break_date=break_date)
     st_nb, st_br = m_nb.structural_table(), m_br.structural_table()
     L.append(f"{'':<34}{'no break':<26}{'level shift (exploratory)'}")
     def cell(st, k, scale=1.0, nd=2):
@@ -160,10 +159,10 @@ def main():
     L.append("! Level terms use a non-standard distribution while SOFR is I(1): see the bootstrap tests below.")
 
     # ------------------------------------------------------------------ 4. nested test
-    L.append(head("4. Does M1 beat M0?  H0: beta1 = beta2 = 0  (SOFR level and FX excluded; M0 = M1 minus columns)"))
+    L.append(head("4. Does M1 beat M0?  H0: no SOFR or FX term matters  (M0 = M1 minus every SOFR/FX column)"))
     rows4 = []
     for lab, model, bd in (("no break", m_nb, None), (f"level shift {break_date:%b %Y}", m_br, break_date)):
-        drop = ecm.nested_columns(model.fit.names, "anchor")
+        drop = restricted_ecm.nested_columns(model.fit.names)
         fF = exclusion_f(model.fit, subset(model.fit, drop))
         hh = exclusion_wald_hac(model.fit, drop)
         bt = nested.anchor_test(df, p, a.q, with_z, "unit_root", a.B, seed=seed, break_date=bd)
@@ -179,9 +178,10 @@ def main():
                 if rows4[1][3]["p_boot_F"] < 0.05 else "; not rejected with a level shift either."))
 
     # ------------------------------------------------------------------ 5. race
-    res = race.run_race(df, tuple(a.horizons), a.window, with_z, B=a.race_B, null="unit_root", p=p, seed=seed)
+    res = race.run_race(df, tuple(a.horizons), a.window, with_z, B=a.race_B, null="unit_root", p=p, q=a.q, seed=seed)
     S = res["summary"]
     L.append(head(f"5. Out-of-sample race: random walk vs M0 vs M1  (direct forecasts, {a.window}-day rolling window)"))
+    L.append(f"M0 and M1 are the ECMs of sections 3-4 ({p} lags of d r, no break), regressors dated at the forecast origin.")
     L.append(f"{'horizon':<10}{'n':<6}{'RMSE bp: RW':<14}{'M0':<9}{'M1':<9}{'best'}")
     for h in a.horizons:
         v = {k: S.loc[h, f'rmse_{k}_bp'] for k in ('rw', 'm0', 'm1')}
@@ -198,7 +198,7 @@ def main():
     # ------------------------------------------------------------------ 6. noise
     L.append(head("6. The noise term (Proposal 4.3.3 assumes it is Gaussian)"))
     nd = noise.noise_diagnostics(m_nb.fit.resid)
-    cmp_ = noise.compare_noise(m_nb.fit, subset(m_nb.fit, ecm.nested_columns(m_nb.fit.names, "all")))
+    cmp_ = noise.compare_noise(m_nb.fit, subset(m_nb.fit, restricted_ecm.nested_columns(m_nb.fit.names)))
     L.append(f"Daily noise: M0 {cmp_['s_eps_m0_bp']:.2f} bp, M1 {cmp_['s_eps_m1_bp']:.2f} bp "
              f"(degrees-of-freedom-adjusted variance reduction from adding SOFR/FX: {cmp_['variance_reduction'] * 100:.1f}%)")
     for nm, r_ in nd.iterrows():
@@ -225,7 +225,7 @@ def main():
     # ------------------------------------------------------------------ 8. robustness
     L.append(head("8. Robustness"))
     grid = robustness.spec_grid(df, tuple(sorted({0, 2, 5, p})), (0, 1), with_z)
-    L.append("(a) Anchor exclusion test vs lag choice - classical/HAC p-values move a lot with the lags:")
+    L.append("(a) M0-vs-M1 exclusion test vs lag choice - classical/HAC p-values move a lot with the lags:")
     L.append(f"{'dr lags':<9}{'dx lags':<9}{'a':<10}{'kappa':<8}{'classical p':<13}{'HAC p'}")
     for _, r_ in grid.iterrows():
         L.append(f"{int(r_['p_dr_lags']):<9}{int(r_['q_dx_lags']):<9}{r_['a']:<10.4f}{r_['kappa']:<8.1f}{pv(r_['p_classical']):<13}{pv(r_['p_HAC'])}")
@@ -236,7 +236,7 @@ def main():
     for _, r_ in sd.iterrows():
         L.append(f"{str(r_['start']):<12}{int(r_['n']):<6}{pv(r_['EG_p_const(BIC)']):<14}{pv(r_['EG_p_trend(BIC)']):<14}"
                  f"{r_['GH_C_stat']:<9.2f}{str(r_['GH_break']):<13}{r_['slope_r_on_x']:<7.2f}{r_['kappa']:.1f}")
-    rw_ = robustness.race_window_grid(df, (250, 500, 750), tuple(a.horizons), with_z)
+    rw_ = robustness.race_window_grid(df, (250, 500, 750), tuple(a.horizons), with_z, p, a.q)
     L.append("\n(c) Race vs window length (RMSE, bp):")
     L.append(f"{'window':<9}{'h':<5}{'RW':<8}{'M0':<8}{'M1'}")
     for _, r_ in rw_.iterrows():
