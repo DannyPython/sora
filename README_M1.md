@@ -44,7 +44,7 @@ Useful options: `--p 2` (fix the dr lags; default is the BIC choice), `--no-fx`,
 
 ## Still open (needs a decision or someone else's work)
 
-* Conditional EVT (GARCH filter first), VaR backtests and the S-REIT repricing-gap step.
+* Conditional EVT (GARCH filter first) and the S-REIT repricing-gap step. (VaR backtests: done, `run_backtest.py`.)
 * **Rotate the two MAS API keys that are in the git history** (the updaters no longer contain keys, but the old
   commits still do), then put the new ones in `.env`.
 * Anchor variable: adding forward points would make CIP hold by construction; settle with the mentor first.

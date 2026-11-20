@@ -367,3 +367,90 @@ def format_m1_report(R: dict, a) -> str:
     L.append("  change is allowed (data-chosen date) or the sample starts later, and its slope then varies a lot.")
     L.append("- Open decisions: anchor variable (forward points would make CIP hold by construction), SORA field definition.")
     return "\n".join(L)
+
+
+def format_backtest_report(R: dict, a) -> str:
+    """Plain-language VaR backtest report. `R` is the dict from run_backtest.compute, `a` the parsed arguments."""
+    pv, head = _pv, _head
+    df, cov, tick, kp, cp = R["df"], R["coverage"], R["tick"], R["power_kupiec"], R["power_christoffersen"]
+    names = {"rw": "RW", "m0": "M0", "m1": "M1"}
+    L = ["=" * W, " Value-at-Risk backtest: random walk vs M0 vs M1 on held-out SORA", "=" * W]
+    L.append(f"Data : {len(df)} daily obs, {df.index[0]:%d %b %Y} to {df.index[-1]:%d %b %Y}; {R['p']} lags of d r; "
+             f"FX term {'in' if R['with_z'] else 'out'}; rolling window {a.window} days.")
+    L.append("VaR  : quantile of the SORA level h days ahead. 'up' = rate rises (borrower / S-REIT risk), 'down' = rate falls.")
+    L.append(f"       normal = Gaussian (the Vasicek assumption); hs = window residual quantile; evt = GPD tail above the "
+             f"top {a.tail_frac:.0%} ({a.gpd.upper()} fit).")
+    L.append("Tests: Kupiec (right number of breaches), Christoffersen independence (no clustering) and conditional coverage.")
+
+    for h in sorted(cov["h"].unique()):
+        c = cov[cov["h"] == h]
+        N = int(c["N"].iloc[0])
+        L.append(head(f"Coverage at h = {h} day{'s' if h > 1 else ''}: {N} {'daily' if h == 1 else 'non-overlapping'} "
+                      "out-of-sample points"))
+        L.append(f"{'tail':<6}{'level':<7}{'method':<8}{'model':<6}{'breaches':<10}{'expected':<10}{'p Kupiec':<10}"
+                 f"{'p exact':<9}{'p indep':<9}{'p cc':<8}{'verdict'}")
+        for _, s in c.iterrows():
+            L.append(f"{s['tail']:<6}{s['level']:<7.0%}{s['method']:<8}{names[s['model']]:<6}{s['breaches']:<10}"
+                     f"{s['expected']:<10.1f}{pv(s['p_pof']):<10}{pv(s['p_binom']):<9}"
+                     f"{('n/a' if not np.isfinite(s['p_ind']) else pv(s['p_ind'])):<9}"
+                     f"{('n/a' if not np.isfinite(s['p_cc']) else pv(s['p_cc'])):<8}{s['verdict']}")
+        nrej = int((c["verdict"] != "not rejected").sum())
+        L.append(f"Reading: {nrej} of {len(c)} model/method/tail/level combinations are rejected at 5%.")
+        too_few = c[(c["p_pof"] < 0.05) & (c["breaches"] < c["expected"])]
+        if len(too_few):
+            L.append(f"  {len(too_few)} rejections are TOO FEW breaches (VaR too wide: costly capital buffer, not under-statement).")
+        clus = c[c["verdict"] == "fail: clustering"]
+        if len(clus):
+            L.append(f"  {len(clus)} fail on clustering only: breaches come in runs, the model is slow to adapt to regime "
+                     "changes (constant variance in the window; a GARCH-filtered EVT is the next step).")
+
+    L.append(head("Head-to-head: quantile (tick) loss, Giacomini-White test (valid for nested models with a rolling window)"))
+    L.append(f"{'h':<4}{'method':<8}{'tail':<6}{'level':<7}{'loss RW':<9}{'loss M0':<9}{'loss M1':<9}"
+             f"{'p M0>RW':<9}{'p M1>RW':<9}{'p M1>M0'}")
+    for _, s in tick.iterrows():
+        L.append(f"{int(s['h']):<4}{s['method']:<8}{s['tail']:<6}{s['level']:<7.0%}{s['loss_rw_bp']:<9.3f}{s['loss_m0_bp']:<9.3f}"
+                 f"{s.get('loss_m1_bp', np.nan):<9.3f}{pv(s['p M0 vs RW']):<9}{pv(s.get('p M1 vs RW', np.nan)):<9}"
+                 f"{pv(s.get('p M1 vs M0', np.nan))}")
+    L.append("Loss in bp (lower is better). 'p M1>M0' small = M1's VaR is significantly better than M0's.")
+    if (tick["N"] < 100).any():
+        L.append("! Rows with fewer than 100 points (long horizons) rest on a handful of independent outcomes: descriptive only.")
+
+    L.append(head("Power: how much can a 'pass' tell us? (Proposal 4.7)"))
+    L.append(f"{'h':<4}{'level':<7}{'N':<6}{'Kupiec accepts':<17}{'size':<7}{'power x1.5':<12}{'power x2':<10}{'power x3'}")
+    for (h, lev), g in kp.groupby(["h", "level"]):
+        pw = dict(zip(g["true_rate_multiple"], g["power"]))
+        g0 = g.iloc[0]
+        acc = f"{int(g0['accept_breaches_min'])}-{int(g0['accept_breaches_max'])} breaches"
+        L.append(f"{int(h):<4}{lev:<7.0%}{int(g0['N']):<6}{acc:<17}"
+                 f"{pw.get(1.0, np.nan):<7.2f}{pw.get(1.5, np.nan):<12.2f}{pw.get(2.0, np.nan):<10.2f}{pw.get(3.0, np.nan):.2f}")
+    L.append("(power = probability the Kupiec test rejects when the true breach rate is 1.5x / 2x / 3x the nominal one)")
+    L.append(f"{'h':<4}{'level':<7}{'P(hit|hit)':<12}{'power of independence test':<28}{'share of samples with no breach'}")
+    for _, s in cp.iterrows():
+        L.append(f"{int(s['h']):<4}{s['level']:<7.0%}{s['pi11']:<12.2f}{s['power_ind']:<28.2f}{s['share_no_breach']:.2f}")
+    L.append("(first row of each block: iid breaches, i.e. the test's actual size)")
+
+    es = R["evt_shape"]
+    L.append(head("Tail shape of the standardised residuals (GPD xi over the rolling windows)"))
+    for _, s in es.iterrows():
+        L.append(f"{names[s['model']]:<4}{s['tail']:<6}median xi {s['xi_median']:6.2f}  (10-90%: {s['xi_p10']:.2f} to "
+                 f"{s['xi_p90']:.2f}); xi > 0 in {s['share_xi_positive']:.0%} of windows")
+    L.append("xi > 0 = heavier than Gaussian tails: the normal VaR understates the extreme quantiles.")
+
+    if "robust" in R:
+        rb = R["robust"]
+        L.append(head(f"Sensitivity (h = {int(rb['h'].iloc[0])}): share of combinations NOT rejected, by window and threshold"))
+        for (w, tf), g in rb.groupby(["window", "tail_frac"]):
+            L.append(f"window {w:<5} GPD threshold top {tf:<5.0%} methods {','.join(sorted(g['method'].unique())):<15}"
+                     f"{(g['verdict'] == 'not rejected').mean():.0%} of {len(g)}")
+
+    L += ["\n" + "=" * W, "Bottom line", "=" * W]
+    c1 = cov[cov["h"] == min(cov["h"])]
+    for tail in ("up", "down"):
+        for lev in sorted(c1["level"].unique(), reverse=True):
+            g = c1[(c1["tail"] == tail) & (c1["level"] == lev)]
+            ok = g[g["verdict"] == "not rejected"]
+            L.append(f"- {tail:<4} {lev:.0%}, h={int(c1['h'].iloc[0])}: not rejected for "
+                     + (", ".join(f"{names[m]}/{me}" for m, me in zip(ok["model"], ok["method"])) or "none"))
+    L.append("- Small breach counts give low power: a 'not rejected' is weak evidence of adequacy (see the power table).")
+    L.append("- The VaR is conditional on the current window only; volatility clustering is not modelled (constant s per window).")
+    return "\n".join(L)
