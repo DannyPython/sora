@@ -1,10 +1,11 @@
 """EVT validation of the M0 and M1 residuals (Proposal 4.6, Blueprint 6.4; ssef/evt.py). Writes every table +
-headline.csv + run_info.json to results/evt/ and prints the headline numbers.
+headline.csv + run_info.json to results/evt/ and prints the headline numbers (the long report is optional).
 
     python run_evt.py                  # 200 bootstrap draws per fit (about 1 minute)
     python run_evt.py --fast           # 50 draws (about 15 seconds), for checking the code
     python run_evt.py --q-compare 0.95 # threshold quantile of the M0 vs M1 comparison and the episode check
     python run_evt.py --fit pwm        # probability-weighted moments instead of maximum likelihood
+    python run_evt.py --report         # also print the plain-language report
 
 Same data, lags and sample as run_m1.py; M0 is the ECM without SOFR and FX on the SAME sample as M1, and both
 residual series are standardised by their own sd before any tail is compared (Proposal 4.6).
@@ -18,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ssef import evt, loaders, provenance
+from ssef import evt, loaders, provenance, report
 from ssef import restricted_ecm as E
 
 
@@ -38,6 +39,7 @@ def parse_args(argv=None):
     ap.add_argument("--gap-days", type=int, default=7, help="a gap longer than this starts a new cluster of exceedances")
     ap.add_argument("--seed", type=int, default=2027)
     ap.add_argument("--fast", action="store_true")
+    ap.add_argument("--report", action="store_true", help="also print the plain-language report")
     ap.add_argument("--out", default="results/evt")
     a = ap.parse_args(argv)
     if a.fast:
@@ -73,46 +75,48 @@ def compute(a) -> dict:
 
 
 def headline(R: dict, a) -> pd.DataFrame:
-    """The numbers that matter, one per row (section, metric, value)."""
-    df, t, cmp_ = R["df"], R["table"], R["compare"]
-    rows = [("data", "n_obs", len(df)), ("data", "dr_lags", R["p"]), ("data", "fx_term", R["with_z"]),
-            ("data", "fit", a.fit), ("data", "q_compare", a.q_compare), ("data", "bootstrap_draws_KS", a.B)]
+    """The numbers that matter, one per row (section, metric, value). Units are in the metric name; the full tables
+    (every threshold, the mean-excess curve, residuals) are in the CSV files."""
+    df, t, cmp_, ep, wo = R["df"], R["table"], R["compare"], R["episodes"], R["without_window"]
+    qc = a.q_compare
+    rows = [("data", "n_obs", len(df)), ("data", "start", str(df.index[0].date())), ("data", "end", str(df.index[-1].date())),
+            ("data", "dr_lags", R["p"]), ("data", "fx_term", R["with_z"]), ("data", "gpd_fit", a.fit),
+            ("data", "threshold_quantile_main", qc), ("data", "bootstrap_draws_ks", a.B),
+            ("data", "episode_window_days", a.window_days)]
     for tail in evt.TAILS:
-        for m in ("M0", "M1"):
-            s = t[(t["model"] == m) & (t["tail"] == tail) & np.isclose(t["q"], a.q_compare)]
-            if s.empty:
-                continue
-            s = s.iloc[0]
-            rows.append((f"tail_{tail}", f"{m} xi at q={a.q_compare:g}",
-                         f"{s['xi']:.3f} (se {s['se_xi']:.3f}), {int(s['n_exc'])} exceedances, KS p {s['KS_p']:.3f}"))
+        sel = t[(t["tail"] == tail) & np.isclose(t["q"], qc)].set_index("model")
         c = cmp_[cmp_["tail"] == tail].iloc[0]
-        rows.append((f"tail_{tail}", "M1 - M0 xi", f"{c['d_xi']:+.3f} ({c['level']:.0%} CI {c['d_xi_lo']:+.3f} to {c['d_xi_hi']:+.3f})"))
-        rows.append((f"tail_{tail}", "M1 - M0 99% quantile (sd units)",
-                     f"{c['d_quantile']:+.3f} ({c['level']:.0%} CI {c['d_quantile_lo']:+.3f} to {c['d_quantile_hi']:+.3f})"))
-    for _, e in R["episodes"].iterrows():
-        rows.append((f"episodes_{e['tail']}", f"{e['model']} exceedances / clusters / share in densest {e['densest_window_days']}d",
-                     f"{e['n_exc']} / {e['clusters']} / {e['share_in_densest_window']:.1%} (from {e['densest_window_start']:%d %b %Y})"))
-    for _, w in R["without_window"].iterrows():
-        full = t[(t["model"] == w["model"]) & (t["tail"] == w["tail"]) & np.isclose(t["q"], w["q"])]
-        rows.append((f"without_episode_{w['tail']}", f"{w['model']} xi with the densest window removed",
-                     f"{w['xi']:.3f} (se {w['se_xi']:.3f}), {int(w['n_exc'])} exceedances, KS p {w['KS_p']:.3f}"
-                     + (f"; full sample {full['xi'].iloc[0]:.3f}" if len(full) else "")))
+        sec = f"tail_{tail}"
+        for name, col in (("n_exceedances", "n_exc"), ("xi", "xi"), ("xi_se", "se_xi"), ("ks_p", "KS_p"), ("q99_sd_units", "q99")):
+            for m in sel.index:
+                rows.append((sec, f"{name}_{m.lower()}", sel.loc[m, col]))
+        for m in sel.index:
+            g = t[(t["tail"] == tail) & (t["model"] == m)]
+            rows += [(sec, f"xi_min_across_thresholds_{m.lower()}", float(g["xi"].min())),
+                     (sec, f"xi_max_across_thresholds_{m.lower()}", float(g["xi"].max()))]
+        rows += [(sec, "xi_m1_minus_m0", c["d_xi"]), (sec, "xi_m1_minus_m0_ci_low", c["d_xi_lo"]),
+                 (sec, "xi_m1_minus_m0_ci_high", c["d_xi_hi"]), (sec, "q99_m1_minus_m0_sd_units", c["d_quantile"]),
+                 (sec, "q99_m1_minus_m0_ci_low", c["d_quantile_lo"]), (sec, "q99_m1_minus_m0_ci_high", c["d_quantile_hi"])]
+        sec = f"episodes_{tail}"
+        e = ep[ep["tail"] == tail].set_index("model")
+        w = wo[wo["tail"] == tail].set_index("model")
+        for m in e.index:
+            rows += [(sec, f"clusters_{m.lower()}", int(e.loc[m, "clusters"])),
+                     (sec, f"share_in_densest_window_pct_{m.lower()}", e.loc[m, "share_in_densest_window"] * 100)]
+        for m in e.index:
+            rows.append((sec, f"densest_window_start_{m.lower()}", str(e.loc[m, "densest_window_start"].date())))
+        for m in w.index:
+            rows += [(sec, f"n_exceedances_without_{m.lower()}", int(w.loc[m, "n_exc"])),
+                     (sec, f"xi_without_window_{m.lower()}", w.loc[m, "xi"]),
+                     (sec, f"ks_p_without_window_{m.lower()}", w.loc[m, "KS_p"])]
     for _, c in R["chosen"].iterrows():
-        rows.append(("threshold_rule", f"{c['model']} {c['tail']}",
-                     f"q = {c['q']:.3f}, xi {c['xi']:.3f}, {c['n_exc']} exceedances" if np.isfinite(c["q"]) else "no threshold passes the rule"))
+        rows.append(("threshold_rule", f"q_{c['model'].lower()}_{c['tail']}", c["q"]))
     return pd.DataFrame(rows, columns=["section", "metric", "value"])
 
 
-def main(argv=None):
-    a = parse_args(argv)
-    out = Path(a.out)
-    out.mkdir(parents=True, exist_ok=True)
-    R = compute(a)
-    hl = headline(R, a)
+def print_report(R: dict, a) -> None:
+    """The long plain-language report (--report)."""
     pd.set_option("display.width", 200, "display.max_columns", 20, "display.float_format", lambda v: f"{v:.3f}")
-    print("=" * 78)
-    print(" EVT validation: GPD tail of the standardised M0 and M1 residuals")
-    print("=" * 78)
     print(f"{len(R['df'])} daily obs, {R['p']} lags of d r, {a.fit.upper()} fit; KS p-values by parametric bootstrap ({a.B} draws).")
     print("'up' = rate rises (S-REIT borrower's risk), 'down' = rate falls. xi > 0: heavier than exponential.\n")
     t = R["table"]
@@ -124,8 +128,7 @@ def main(argv=None):
     print("\nTail shape without the densest window (threshold kept at its full-sample value):")
     print(R["without_window"][["model", "tail", "window_start", "n_exc", "xi", "se_xi", "KS_p"]].to_string(index=False))
     print("\nReading:")
-    cmp_ = R["compare"]
-    for _, c in cmp_.iterrows():
+    for _, c in R["compare"].iterrows():
         inc = c["d_xi_lo"] <= 0 <= c["d_xi_hi"]
         print(f"  {c['tail']:>4}: M1 - M0 shape difference {'includes' if inc else 'excludes'} 0 -> "
               + ("the tails of M0 and M1 cannot be told apart." if inc else "the tails differ."))
@@ -134,6 +137,11 @@ def main(argv=None):
     if len(flat):
         print(f"  {len(flat)} of {len(sel)} fits at q={a.q_compare:g} have a 95% band for xi that includes 0: a heavy tail is not established there.")
     print("  See the 'without the densest window' table: a large change in xi means the tail rests on one episode.")
+
+
+def save(R: dict, a, out: Path) -> pd.DataFrame:
+    h = headline(R, a)
+    h.to_csv(out / "headline.csv", index=False)
     R["table"].to_csv(out / "threshold_table.csv", index=False)
     R["chosen"].to_csv(out / "threshold_rule.csv", index=False)
     R["mean_excess"].to_csv(out / "mean_excess.csv", index=False)
@@ -141,9 +149,21 @@ def main(argv=None):
     R["episodes"].to_csv(out / "episodes.csv", index=False)
     R["without_window"].to_csv(out / "without_densest_window.csv", index=False)
     pd.DataFrame({m: s for m, s in R["u"].items()}).to_csv(out / "std_residuals.csv")
-    hl.to_csv(out / "headline.csv", index=False)
     provenance.write(out / "run_info.json", provenance.run_info(R["df"], vars(a), {"p_used": R["p"]}))
-    print(f"\nFiles saved in: {out}")
+    return h
+
+
+def main(argv=None):
+    a = parse_args(argv)
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    R = compute(a)
+    h = save(R, a, out)
+    print(report.format_headline(h, "EVT validation: GPD tail of the standardised M0 and M1 residuals - headline numbers"))
+    if a.report:
+        print("\n" + "=" * 78 + "\n")
+        print_report(R, a)
+    print(f"\nAll tables saved in: {out}")
     return R
 
 

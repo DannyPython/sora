@@ -153,3 +153,18 @@ def test_run_density_writes_every_table(tmp_path):
         assert (tmp_path / f"density_table_h{h}.csv").exists() and (tmp_path / f"pit_histogram_h{h}.csv").exists()
     assert R["n"][20] < 100 < R["n"][1]
     assert (tmp_path / "headline.csv").exists() and (tmp_path / "run_info.json").exists()
+
+
+@needs_data
+def test_run_density_prints_the_headline_layout_and_the_report_only_on_request(tmp_path, capsys):
+    from test_evt import check_headline_layout
+    run_density.main(["--out", str(tmp_path)])
+    out = capsys.readouterr().out
+    h = check_headline_layout(out, tmp_path, ["data", "density_h1", "density_h1_normal", "density_h1_empirical", "reading_h1"])
+    assert "Horizon 1 day(s)" not in out
+    assert {"ks_p_m1", "sd_z_rw", "share_upper5_pct_m1"} <= set(h["metric"])
+    assert float(h.loc[h["metric"] == "share_lower5_pct_rw", "value"].iloc[0]) == pytest.approx(
+        100 * run_density.compute(run_density.parse_args(["--out", str(tmp_path)]))["tables"][1].set_index(["model", "predictive"]).loc[("rw", "normal"), "lower_5%"])
+    run_density.main(["--report", "--out", str(tmp_path)])
+    out2 = capsys.readouterr().out
+    assert out2.index("headline numbers") < out2.index("Horizon 1 day(s)") < out2.index("All tables saved in:")

@@ -152,3 +152,28 @@ def test_run_evt_fast_writes_every_table(tmp_path):
         assert (tmp_path / f).exists(), f
     assert set(R["compare"]["tail"]) == {"up", "down"} and (R["episodes"]["clusters"] > 1).all()
     assert (R["without_window"]["n_exc"] < R["episodes"]["n_exc"]).all()
+
+
+def check_headline_layout(out: str, out_dir, sections):
+    """The layout of run_m0 / run_m1 / run_backtest: rule, title, [section] blocks of 'metric   value', saved-tables line."""
+    lines = out.splitlines()
+    assert lines[0] == "=" * 78 and lines[2] == "=" * 78 and "headline numbers" in lines[1]
+    for s in sections:
+        assert f"[{s}]" in lines
+    assert lines[-1].startswith("All tables saved in:")
+    h = pd.read_csv(out_dir / "headline.csv")
+    assert list(h.columns) == ["section", "metric", "value"] and h["metric"].str.len().max() <= 38
+    assert not h.duplicated(["section", "metric"]).any()                                 # no repeated metric inside a section
+    return h
+
+
+@needs_data
+def test_run_evt_prints_the_headline_layout_and_the_report_only_on_request(tmp_path, capsys):
+    run_evt.main(["--fast", "--B", "10", "--B-compare", "20", "--out", str(tmp_path)])
+    out = capsys.readouterr().out
+    h = check_headline_layout(out, tmp_path, ["data", "tail_up", "tail_down", "episodes_up", "episodes_down", "threshold_rule"])
+    assert "Reading:" not in out and "M0 vs M1 (paired block bootstrap" not in out
+    assert {"xi_m0", "xi_m1_minus_m0_ci_low", "xi_without_window_m1", "share_in_densest_window_pct_m0"} <= set(h["metric"])
+    run_evt.main(["--fast", "--B", "10", "--B-compare", "20", "--report", "--out", str(tmp_path)])
+    out2 = capsys.readouterr().out
+    assert out2.index("headline numbers") < out2.index("Reading:") < out2.index("All tables saved in:")
