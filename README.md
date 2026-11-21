@@ -10,6 +10,7 @@ pip install -r requirements.txt
 python run_m0.py              # M0: gate, calibration, forecasts      -> results/m0/
 python run_m1.py              # M1: gate, ECM, valid tests, race      -> results/m1/   (about 30 s; --fast for 8 s)
 python run_backtest.py        # VaR backtest RW vs M0 vs M1            -> results/backtest/ (about 10 s; --report for the text)
+python run_validation.py      # size and power of the tests on simulated data -> results/validation/ (about 15 min; --fast for 3 min)
 python check_data.py          # health check of the three data files (exit code 1 on any FAIL)
 python -m pytest              # all tests
 ```
@@ -31,13 +32,14 @@ Refreshing the data needs MAS API keys: copy `.env.example` to `.env`, fill it i
 | `ssef/nested.py` | Bootstrap tests valid with an I(1) regressor (anchor test, ECM cointegration test) |
 | `ssef/race.py` | Random walk vs M0 vs M1 at 1/20/60 days, bootstrap Clark-West |
 | `ssef/backtest.py` | VaR backtest (Proposal 4.7): 95/99% VaR of the SORA level from RW/M0/M1 (normal, historical, EVT-GPD tails), Kupiec, Christoffersen, tick-loss head-to-head (Giacomini-White), power |
+| `ssef/validate_tests.py` | Validation of the validation: size and power of the classical / HAC / bootstrap F tests, Engle-Granger, the ECM bootstrap gate and CUSUM on simulated data with known truth (spurious, M0, M0 + level shift, M1 with chosen beta1 and speed) |
 | `ssef/noise.py`, `ssef/simulate.py`, `ssef/robustness.py` | M1 noise checks, scenarios, sensitivity |
 | `ssef/provenance.py` | Run provenance: data hashes, versions, seeds, git commit -> `run_info.json` |
 | `ssef/validate.py`, `check_data.py` | Data validation |
-| `run_m0.py`, `run_m1.py`, `run_backtest.py` | Reproducible drivers |
+| `run_m0.py`, `run_m1.py`, `run_backtest.py`, `run_validation.py` | Reproducible drivers (`run_validation.py` is opt-in, slow) |
 | `updaters/`, `update_all.py` | Data refresh from MAS and the NY Fed (see `data/README.md`) |
 | `data/` | The three daily series and their data dictionary (`data/README.md`) |
-| `tests/` | `test_m0.py`, `test_m1.py`, `test_backtest.py`, `test_data.py` |
+| `tests/` | `test_m0.py`, `test_m1.py`, `test_backtest.py`, `test_validate_tests.py`, `test_data.py` |
 | `README_M1.md` | M1 notes and open decisions |
 
 ## Conventions
